@@ -2,6 +2,10 @@
 name = "actix-cloud-codegen"
 version = "0.1.0"
 edition = "2021"
+authors = ["MXWXZ <matrixwxz@gmail.com>"]
+description = "Proc macros for Actix Cloud."
+license = "MIT"
+repository = "https://github.com/MXWXZ/actix-cloud"
 
 [features]
 default = []
