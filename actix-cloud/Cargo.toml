@@ -8,7 +8,12 @@ license = "MIT"
 readme = "../README.md"
 repository = "https://github.com/MXWXZ/actix-cloud"
 keywords = ["http", "web", "framework", "async", "actix"]
-categories = ["Asynchronous", "Network programming", "HTTP server"]
+categories = [
+    "network-programming",
+    "asynchronous",
+    "web-programming::http-server",
+    "web-programming::websocket",
+]
 
 [features]
 default = ["logger"]
