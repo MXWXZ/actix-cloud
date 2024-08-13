@@ -1,0 +1,4 @@
+[workspace]
+members = ["actix-cloud", "actix-cloud-codegen"]
+resolver = "2"
+exclude = ["examples"]

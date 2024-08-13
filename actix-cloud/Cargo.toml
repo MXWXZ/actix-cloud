@@ -1,0 +1,53 @@
+[package]
+name = "actix-cloud"
+version = "0.1.0"
+edition = "2021"
+authors = ["MXWXZ <matrixwxz@gmail.com>"]
+description = "Actix Cloud is an all-in-one web framework based on Actix Web."
+
+[features]
+default = ["logger"]
+serde = ["dep:serde", "dep:serde_json", "dep:serde_with"]
+redis = ["dep:redis"]
+rustls = ["actix-web/rustls-0_23", "dep:rustls", "dep:rustls-pemfile"]
+logger = ["dep:tracing", "dep:tracing-subscriber", "dep:colored", "serde"]
+i18n = ["actix-cloud-codegen/i18n"]
+session = ["dep:actix-utils", "serde", "dep:rand"]
+
+[dependencies]
+actix-web = { version = "4.8.0", features = ["secure-cookies"] }
+parking_lot = "0.12.3"
+thiserror = "1.0.63"
+tokio = { version = "1.39.2", features = ["full"] }
+async-trait = "0.1.81"
+chrono = "0.4.38"
+futures = "0.3.30"
+
+# serde
+serde = { version = "1.0.205", features = ["derive"], optional = true }
+serde_json = { version = "1.0.122", optional = true }
+serde_with = { version = "3.9.0", optional = true }
+
+# logger
+tracing = { version = "0.1.40", optional = true }
+tracing-subscriber = { version = "0.3.18", features = [
+    "json",
+    "parking_lot",
+], optional = true }
+colored = { version = "2.1.0", optional = true }
+
+# redis
+redis = { version = "0.26.1", features = [
+    "tokio-rustls-comp",
+    "connection-manager",
+], optional = true }
+
+# rustls
+rustls = { version = "0.23.12", optional = true }
+rustls-pemfile = { version = "2.1.3", optional = true }
+
+# session
+actix-utils = { version = "3.0.1", optional = true }
+rand = { version = "0.8.5", optional = true }
+
+actix-cloud-codegen = { version = "0.1.0", path = "../actix-cloud-codegen" }
