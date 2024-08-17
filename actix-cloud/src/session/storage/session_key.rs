@@ -1,4 +1,4 @@
-use crate::error;
+use anyhow::bail;
 
 /// A session key, the string stored in a client-side cookie to associate a user with its session
 /// state on the backend.
@@ -10,14 +10,11 @@ use crate::error;
 pub struct SessionKey(String);
 
 impl TryFrom<String> for SessionKey {
-    type Error = error::Error;
+    type Error = crate::Error;
 
     fn try_from(val: String) -> Result<Self, Self::Error> {
         if val.len() > 4064 {
-            return Err(error::Error::Session(String::from(
-                "The session key is bigger than 4064 bytes, the upper limit on cookie content.",
-            ))
-            .into());
+            bail!("The session key is bigger than 4064 bytes, the upper limit on cookie content.");
         }
 
         Ok(SessionKey(val))

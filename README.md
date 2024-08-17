@@ -1,6 +1,6 @@
 # actix-cloud
 
-Actix Cloud is an all-in-one web framework based on [Actix Web](https://github.com/actix/actix-web).
+Actix Cloud is an all-in-one web framework based on [Actix Web](https://crates.io/crates/actix-web).
 
 ## Features
 Actix Cloud is highly configurable. You can only enable needed features, implement your own feature backend or even use other libraries.
@@ -8,11 +8,19 @@ Actix Cloud is highly configurable. You can only enable needed features, impleme
 - [logger](#logger) (Default: Enable)
 - [i18n](#i18n) (Default: Disable)
 - [security](#security) (Embedded)
-- memorydb backend
+- memorydb (Default: Disable)
   - [default](#memorydb-default) (Embedded)
   - [redis](#memorydb-redis) (Default: Disable)
 - [auth](#auth) (Embedded)
 - [session](#session) (Default: Disable)
+- [config](#config) (Default: Disable)
+  - config-json
+  - config-yaml
+  - config-toml
+- [request] (#request) (Embedded)
+- [response](#response) (Default: Disable)
+  - response-json
+- [traceid](#traceid) (Default: Disable)
 
 ## Guide
 
@@ -32,7 +40,7 @@ App::new()
 ```
 
 ### logger
-We use [tracing](https://github.com/tokio-rs/tracing) as our logger library. It is thread safe. You can use it everywhere.
+We use [tracing](https://crates.io/crates/tracing) as our logger library. It is thread safe. You can use it everywhere.
 
 Start logger:
 ```
@@ -47,13 +55,15 @@ logger.init(LoggerBuilder::new());
 logger.sender().send(...);
 ```
 
+Reserved field:
+- `_time`: timestamp in microseconds, override the log timestamp.
+
 ### i18n
-We use `rust-i18n-support` from [rust-i18n](https://github.com/longbridgeapp/rust-i18n) as our i18n core. 
+We use `rust-i18n-support` from [rust-i18n](https://crates.io/crates/rust-i18n) as our i18n core. 
 
 Load locale:
 ```
-let mut locale = Locale::new(String::from("en-US"));
-locale.add_locale(i18n!("locale"));
+let locale = Locale::new(String::from("en-US")).add_locale(i18n!("locale"));
 ```
 
 Translate:
@@ -94,7 +104,7 @@ Actix Cloud has a default memory database backend used for sessions. You can als
 **Note: the default backend does not have memory limitation, DDoS is possible if gateway rate limiting is not implemented**
 
 ```
-DefaultBackend::new().await.unwrap()
+DefaultBackend::new()
 ```
 
 ### memorydb-redis
@@ -143,6 +153,58 @@ Most features and usages are based on [actix-session](https://crates.io/crates/a
 ```
 app.wrap(SessionMiddleware::builder(memorydb.clone(), Key::generate()).build())
 ```
+
+### config
+[config-rs](https://crates.io/crates/config) is the underlying library.
+
+Supported features:
+- config-json: Support for JSON files.
+- config-yaml: Support for YAML files.
+- config-toml: Support for TOML files.
+
+### request
+Provide per-request extension.
+
+Built-in middleware:
+- Store in [extensions](https://docs.rs/actix-web/latest/actix_web/struct.HttpRequest.html#method.extensions_mut).
+- If `i18n` feature is enabled, language is identified through the `lang` query parameter, or `locale.default` in `GlobalState`.
+
+Enable built-in middleware:
+```
+app.wrap(request::Middleware::new())
+```
+
+Usage:
+```
+async fn handler(req: HttpRequest) -> impl Responder {
+    let ext = req.extensions();
+    let ext = ext.get::<actix_cloud::request::Extension>().unwrap();
+    ...
+}
+```
+
+### response
+Provide useful response type.
+
+If `i18n` feature is enabled, response message will be translated automatically.
+
+If `response-json` feature is enabled, response message will be converted to JSON automatically.
+
+1. Create response yml files.
+2. Use `build.rs` to generate source files.
+3. Use `include!` to include generated files.
+
+See [examples](examples/response) for detailed usage.
+
+### traceid
+Add trace ID for each request based on [tracing-actix-web](https://crates.io/crates/tracing-actix-web).
+
+```
+app.wrap(request::Middleware::new())
+   .wrap(TracingLogger::default())      // This should be after request::Middleware
+```
+
+If you enable `request` feature, make sure it is before `TracingLogger` since the `trace_id` field is based on it.
 
 ## License
 This project is licensed under the [MIT license](LICENSE).

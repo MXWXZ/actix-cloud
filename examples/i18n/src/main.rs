@@ -7,8 +7,7 @@ use actix_cloud::{
 
 #[actix_cloud::main]
 async fn main() -> io::Result<()> {
-    let mut locale = Locale::new(String::from("en-US"));
-    locale.add_locale(i18n!("locale"));
+    let locale = Locale::new(String::from("en-US")).add_locale(i18n!("locale"));
 
     println!("Default: {}", t!(locale, "hello.world"));
     println!("Translated: {}", t!(locale, "hello.world", "zh-CN"));

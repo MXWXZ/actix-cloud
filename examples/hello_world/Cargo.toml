@@ -6,4 +6,4 @@ edition = "2021"
 [dependencies]
 qstring = "0.7.2"
 
-actix-cloud = { path = "../../actix-cloud" }
+actix-cloud = { path = "../../actix-cloud", features = ["traceid"] }

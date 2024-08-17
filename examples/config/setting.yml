@@ -1,0 +1,5 @@
+debug: false
+
+sub:
+  priority: 32
+  key: "test_key"

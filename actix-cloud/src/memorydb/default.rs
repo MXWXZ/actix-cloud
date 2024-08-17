@@ -1,20 +1,18 @@
-use std::{collections::HashMap, sync::Arc, time::Duration, u64};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use anyhow::anyhow;
 use async_trait::async_trait;
 use chrono::Utc;
 use parking_lot::RwLock;
 
 use super::interface::MemoryDB;
-use crate::{error::Error, Result};
+use crate::Result;
 
 struct Data(String, Option<u64>);
 
 impl Data {
     fn now() -> Result<u64> {
-        Utc::now()
-            .timestamp()
-            .try_into()
-            .map_err(|_| Error::Timestamp("non-positive timestamp"))
+        Utc::now().timestamp().try_into().map_err(Into::into)
     }
 
     fn parse_ttl(ttl: Option<u64>) -> Result<Option<u64>> {
@@ -22,7 +20,7 @@ impl Data {
             Ok(Some(
                 Self::now()?
                     .checked_add(x)
-                    .ok_or(Error::Timestamp("timestamp overflow"))?,
+                    .ok_or(anyhow!("timestamp overflow"))?,
             ))
         } else {
             Ok(None)
@@ -31,7 +29,7 @@ impl Data {
 
     fn new<S>(value: S, ttl: Option<u64>) -> Result<Self>
     where
-        S: Into<String> + Send,
+        S: Into<String>,
     {
         Ok(Self(value.into(), Self::parse_ttl(ttl)?))
     }
@@ -60,36 +58,36 @@ pub struct DefaultBackend {
 }
 
 impl DefaultBackend {
-    pub async fn new() -> Result<impl MemoryDB> {
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             data: Arc::new(RwLock::new(HashMap::new())),
-        })
+        }
+    }
+}
+
+impl Default for DefaultBackend {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[async_trait]
 impl MemoryDB for DefaultBackend {
-    async fn set<S>(&self, key: S, value: S) -> Result<()>
-    where
-        S: Into<String> + Send,
-    {
+    async fn set(&self, key: &str, value: &str) -> Result<()> {
         self.data
             .write()
-            .insert(key.into(), Data::new(value, None)?);
+            .insert(key.to_owned(), Data::new(value, None)?);
         Ok(())
     }
 
-    async fn get<S>(&self, key: S) -> Result<Option<String>>
-    where
-        S: AsRef<str> + Send,
-    {
+    async fn get(&self, key: &str) -> Result<Option<String>> {
         let rlock = self.data.read();
-        if let Some(v) = rlock.get(key.as_ref()) {
+        if let Some(v) = rlock.get(key) {
             if v.valid()? {
                 Ok(Some(v.0.to_owned()))
             } else {
                 drop(rlock);
-                self.data.write().remove(key.as_ref());
+                self.data.write().remove(key);
                 Ok(None)
             }
         } else {
@@ -97,11 +95,8 @@ impl MemoryDB for DefaultBackend {
         }
     }
 
-    async fn get_del<S>(&self, key: S) -> Result<Option<String>>
-    where
-        S: AsRef<str> + Send,
-    {
-        let v = self.data.write().remove(key.as_ref());
+    async fn get_del(&self, key: &str) -> Result<Option<String>> {
+        let v = self.data.write().remove(key);
         if let Some(v) = v {
             if v.valid()? {
                 return Ok(Some(v.0));
@@ -110,17 +105,14 @@ impl MemoryDB for DefaultBackend {
         Ok(None)
     }
 
-    async fn get_ex<S>(&self, key: S, ttl: &Duration) -> Result<Option<String>>
-    where
-        S: AsRef<str> + Send,
-    {
+    async fn get_ex(&self, key: &str, ttl: &Duration) -> Result<Option<String>> {
         let mut wlock = self.data.write();
-        if let Some(v) = wlock.get_mut(key.as_ref()) {
+        if let Some(v) = wlock.get_mut(key) {
             if v.valid()? {
                 v.set_ttl(Some(ttl.as_secs()))?;
                 Ok(Some(v.0.to_owned()))
             } else {
-                wlock.remove(key.as_ref());
+                wlock.remove(key);
                 Ok(None)
             }
         } else {
@@ -128,37 +120,28 @@ impl MemoryDB for DefaultBackend {
         }
     }
 
-    async fn set_ex<S>(&self, key: S, value: S, ttl: &Duration) -> Result<()>
-    where
-        S: Into<String> + Send,
-    {
+    async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> Result<()> {
         self.data
             .write()
-            .insert(key.into(), Data::new(value, Some(ttl.as_secs()))?);
+            .insert(key.to_owned(), Data::new(value, Some(ttl.as_secs()))?);
         Ok(())
     }
 
-    async fn del<S>(&self, key: S) -> Result<bool>
-    where
-        S: AsRef<str> + Send,
-    {
-        Ok(self.data.write().remove(key.as_ref()).is_some())
+    async fn del(&self, key: &str) -> Result<bool> {
+        Ok(self.data.write().remove(key).is_some())
     }
 
-    async fn expire<S>(&self, key: S, ttl: i64) -> Result<bool>
-    where
-        S: AsRef<str> + Send,
-    {
+    async fn expire(&self, key: &str, ttl: i64) -> Result<bool> {
         if ttl <= 0 {
             self.del(key).await
         } else {
             let mut wlock = self.data.write();
-            if let Some(v) = wlock.get_mut(key.as_ref()) {
+            if let Some(v) = wlock.get_mut(key) {
                 if v.valid()? {
                     v.set_ttl(Some(ttl as u64))?;
                     Ok(true)
                 } else {
-                    wlock.remove(key.as_ref());
+                    wlock.remove(key);
                     Ok(false)
                 }
             } else {

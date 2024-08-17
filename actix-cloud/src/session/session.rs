@@ -23,7 +23,7 @@ use crate::Result;
 /// You can also retrieve a [`Session`] object from an `HttpRequest` or a `ServiceRequest` using
 /// [`SessionExt`].
 ///
-/// [`SessionExt`]: crate::SessionExt
+/// [`SessionExt`]: super::SessionExt
 #[derive(Clone)]
 pub struct Session(Rc<RefCell<SessionInner>>);
 

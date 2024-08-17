@@ -5,34 +5,20 @@ use async_trait::async_trait;
 use crate::Result;
 
 #[async_trait]
-pub trait MemoryDB: Clone {
-    async fn set<S>(&self, key: S, value: S) -> Result<()>
-    where
-        S: Into<String> + Send;
+pub trait MemoryDB: Send + Sync {
+    async fn set(&self, key: &str, value: &str) -> Result<()>;
 
-    async fn get<S>(&self, key: S) -> Result<Option<String>>
-    where
-        S: AsRef<str> + Send;
+    async fn get(&self, key: &str) -> Result<Option<String>>;
 
-    async fn get_del<S>(&self, key: S) -> Result<Option<String>>
-    where
-        S: AsRef<str> + Send;
+    async fn get_del(&self, key: &str) -> Result<Option<String>>;
 
-    async fn get_ex<S>(&self, key: S, ttl: &Duration) -> Result<Option<String>>
-    where
-        S: AsRef<str> + Send;
+    async fn get_ex(&self, key: &str, ttl: &Duration) -> Result<Option<String>>;
 
-    async fn set_ex<S>(&self, key: S, value: S, ttl: &Duration) -> Result<()>
-    where
-        S: Into<String> + Send;
+    async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> Result<()>;
 
-    async fn del<S>(&self, key: S) -> Result<bool>
-    where
-        S: AsRef<str> + Send;
+    async fn del(&self, key: &str) -> Result<bool>;
 
-    async fn expire<S>(&self, key: S, ttl: i64) -> Result<bool>
-    where
-        S: AsRef<str> + Send;
+    async fn expire(&self, key: &str, ttl: i64) -> Result<bool>;
 
     async fn flush(&self) -> Result<()>;
 }
@@ -40,27 +26,25 @@ pub trait MemoryDB: Clone {
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
-
     use tokio::time::sleep;
 
-    use crate::memorydb::default::DefaultBackend;
-    #[cfg(feature = "redis")]
-    use crate::memorydb::redis::RedisBackend;
-
     use super::*;
+    use crate::memorydb::default::DefaultBackend;
 
     #[cfg(feature = "redis")]
     async fn setup_redis() -> impl MemoryDB {
-        RedisBackend::new("redis://127.0.0.1:6379/0").await.unwrap()
+        crate::memorydb::redis::RedisBackend::new("redis://127.0.0.1:6379/0")
+            .await
+            .unwrap()
     }
 
-    async fn setup_default() -> impl MemoryDB {
-        DefaultBackend::new().await.unwrap()
+    fn setup_default() -> impl MemoryDB {
+        DefaultBackend::new()
     }
 
     #[tokio::test]
     async fn test_normal() {
-        test_normal_fn("default", setup_default().await).await;
+        test_normal_fn("default", setup_default()).await;
         #[cfg(feature = "redis")]
         test_normal_fn("redis", setup_redis().await).await;
     }
@@ -92,7 +76,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ex() {
-        test_ex_fn("default", setup_default().await).await;
+        test_ex_fn("default", setup_default()).await;
         #[cfg(feature = "redis")]
         test_ex_fn("redis", setup_redis().await).await;
     }
@@ -127,7 +111,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_expire() {
-        test_expire_fn("default", setup_default().await).await;
+        test_expire_fn("default", setup_default()).await;
         #[cfg(feature = "redis")]
         test_expire_fn("redis", setup_redis().await).await;
     }

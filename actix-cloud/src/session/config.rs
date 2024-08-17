@@ -315,7 +315,7 @@ impl<M: MemoryDB> SessionMiddlewareBuilder<M> {
     /// # Default
     /// By default, the cookie content is encrypted. Encrypted was chosen instead of signed as
     /// default because it reduces the chances of sensitive information being exposed in the session
-    /// key by accident, regardless of [`SessionStore`] implementation you chose to use.
+    /// key by accident, regardless of SessionStore implementation you chose to use.
     ///
     /// For example, if you are using cookie-based storage, you definitely want the cookie content
     /// to be encrypted—the whole session state is embedded in the cookie! If you are using

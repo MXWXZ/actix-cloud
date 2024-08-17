@@ -125,14 +125,16 @@ impl Logger {
 }
 
 pub type WriterFn = Box<dyn Fn(LogItem, Box<dyn Write>) -> Result<()> + Send>;
+pub type FilterFn = Box<dyn Fn(&LogItem) -> bool + Send>;
+pub type TransformerFn = Box<dyn Fn(LogItem) -> LogItem + Send>;
 
 pub struct LoggerBuilder {
     json: bool,
     level: Level,
     filename: bool,
     line_number: bool,
-    filter: Option<Box<dyn Fn(&LogItem) -> bool + Send>>,
-    transformer: Option<Box<dyn Fn(LogItem) -> LogItem + Send>>,
+    filter: Option<FilterFn>,
+    transformer: Option<TransformerFn>,
     json_writer: WriterFn,
     color_writer: WriterFn,
 }
@@ -179,10 +181,14 @@ impl LoggerBuilder {
         }
         write!(buf, "{} {}", ":".bright_black(), item.message)?;
         for (k, v) in &item.fields {
-            buf += &format!(" {k}={v}").bright_black().to_string();
+            if !k.starts_with("log.") {
+                buf += &format!(" field.{k}={v}").bright_black().to_string();
+            }
         }
         for (k, v) in item.span {
-            buf += &format!(" {k}={v}").bright_black().to_string();
+            if !k.starts_with("http.") && !k.starts_with("otel.") && k != "name" {
+                buf += &format!(" span.{k}={v}").bright_black().to_string();
+            }
         }
 
         writer

@@ -1,0 +1,5 @@
+response:
+  ok: "Success"
+  service1:
+    some: "This is return value of service1"
+    error: "This is error value of service1"

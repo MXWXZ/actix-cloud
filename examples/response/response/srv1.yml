@@ -1,0 +1,6 @@
+ServiceOneSome:
+  code: 10000
+  message: "response.service1.some"
+ServiceOneError:
+  code: 10001
+  message: "response.service1.error"

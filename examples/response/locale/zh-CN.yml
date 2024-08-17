@@ -1,0 +1,5 @@
+response:
+  ok: "成功"
+  service1:
+    some: "这是service1的返回"
+    error: "这是service1的错误"

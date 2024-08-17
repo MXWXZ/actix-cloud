@@ -17,7 +17,7 @@ use super::{
     storage::{SessionKey, SessionStore},
     Session, SessionStatus,
 };
-use crate::{error, memorydb::MemoryDB, Result};
+use crate::{memorydb::MemoryDB, Result};
 
 /// A middleware for session management in Actix Web applications.
 ///
@@ -31,8 +31,7 @@ use crate::{error, memorydb::MemoryDB, Result};
 /// Use [`SessionMiddleware::new`] to initialize the session framework using the default parameters.
 /// To create a new instance of [`SessionMiddleware`] you need to provide:
 ///
-/// - an instance of the session storage backend you wish to use (i.e. an implementation of
-///   [`SessionStore`]);
+/// - an instance of the session storage backend you wish to use (i.e. an implementation of SessionStore);
 /// - a secret key, to sign or encrypt the content of client-side session cookie.
 ///
 /// # How did we choose defaults?
@@ -54,8 +53,7 @@ impl<M: MemoryDB> SessionMiddleware<M> {
     /// parameters.
     ///
     /// To create a new instance of [`SessionMiddleware`] you need to provide:
-    /// - an instance of the session storage backend you wish to use (i.e. an implementation of
-    ///   [`SessionStore`]);
+    /// - an instance of the session storage backend you wish to use (i.e. an implementation of SessionStore);
     /// - a secret key, to sign or encrypt the content of client-side session cookie.
     pub fn new(client: M, key: Key) -> Self {
         Self::builder(client, key).build()
@@ -64,8 +62,7 @@ impl<M: MemoryDB> SessionMiddleware<M> {
     /// A fluent API to configure [`SessionMiddleware`].
     ///
     /// It takes as input the two required inputs to create a new instance of [`SessionMiddleware`]:
-    /// - an instance of the session storage backend you wish to use (i.e. an implementation of
-    ///   [`SessionStore`]);
+    /// - an instance of the session storage backend you wish to use (i.e. an implementation of SessionStore);
     /// - a secret key, to sign or encrypt the content of client-side session cookie.
     pub fn builder(client: M, key: Key) -> SessionMiddlewareBuilder<M> {
         SessionMiddlewareBuilder::new(client, config::default_configuration(key))
@@ -317,8 +314,7 @@ fn set_session_cookie(
 
     // set cookie
     let cookie = jar.delta().next().unwrap();
-    let val = HeaderValue::from_str(&cookie.encoded().to_string())
-        .map_err(|e| error::Error::Session(e.to_string()))?;
+    let val = HeaderValue::from_str(&cookie.encoded().to_string())?;
 
     response.headers_mut().append(SET_COOKIE, val);
 
@@ -341,8 +337,7 @@ fn delete_session_cookie(response: &mut ResponseHead, config: &CookieConfigurati
 
     removal_cookie.make_removal();
 
-    let val = HeaderValue::from_str(&removal_cookie.to_string())
-        .map_err(|e| error::Error::Session(e.to_string()))?;
+    let val = HeaderValue::from_str(&removal_cookie.to_string())?;
     response.headers_mut().append(SET_COOKIE, val);
 
     Ok(())

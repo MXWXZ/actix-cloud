@@ -1,0 +1,15 @@
+[package]
+name = "response"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+actix-cloud = { path = "../../actix-cloud", features = [
+    "response-json",
+    "i18n",
+] }
+
+[build-dependencies]
+
+actix-cloud = { path = "../../actix-cloud", features = ["response-build"] }

@@ -1,7 +1,7 @@
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+
 use proc_macro::TokenStream;
 use quote::quote;
-#[cfg(feature = "i18n")]
-use rust_i18n_support::{is_debug, load_locales};
 #[cfg(feature = "i18n")]
 use std::{collections::HashMap, env, path};
 
@@ -43,7 +43,7 @@ pub fn i18n(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let current_dir = path::PathBuf::from(cargo_dir);
     let locales_path = current_dir.join(option.locales_path);
 
-    let data = load_locales(&locales_path.display().to_string(), |_| false);
+    let data = rust_i18n_support::load_locales(&locales_path.display().to_string(), |_| false);
     let mut translation = HashMap::new();
     for (lang, mp) in data {
         for (k, v) in mp {
@@ -52,7 +52,7 @@ pub fn i18n(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     }
     let code = i18n::generate_code(&translation);
 
-    if is_debug() {
+    if rust_i18n_support::is_debug() {
         println!("{code}");
     }
 

@@ -1,54 +1,57 @@
-use actix_web::dev::{Server, ServerHandle};
+use actix_web::dev;
 use actix_web::web::Data;
-use parking_lot::Mutex;
+use chrono::{DateTime, Utc};
+use parking_lot::{Mutex, RwLock};
 
-#[cfg(feature = "i18n")]
-use crate::i18n::Locale;
-#[cfg(feature = "logger")]
-use crate::logger::Logger;
-use crate::memorydb::interface::MemoryDB;
 use crate::Result;
 
-pub struct GlobalState<M>
-where
-    M: MemoryDB,
-{
-    pub memorydb: M,
+pub struct GlobalState {
+    #[cfg(feature = "memorydb")]
+    pub memorydb: Box<dyn crate::memorydb::interface::MemoryDB>,
+
+    #[cfg(feature = "config")]
+    pub config: config::Config,
 
     #[cfg(feature = "logger")]
     /// Global logger.
-    pub logger: Logger,
+    pub logger: crate::logger::Logger,
 
     #[cfg(feature = "i18n")]
-    pub locale: Locale,
+    pub locale: crate::i18n::Locale,
 
-    /// Handle stop state.
-    pub stop_handle: StopHandle,
+    /// Handle server state.
+    pub server: ServerHandle,
 }
 
-impl<M> GlobalState<M>
-where
-    M: MemoryDB,
-{
+impl GlobalState {
     pub fn build(self) -> Data<Self> {
         Data::new(self)
     }
 }
 
 #[derive(Default)]
-pub struct StopHandle {
-    inner: Mutex<Option<ServerHandle>>,
+pub struct ServerHandle {
+    inner: Mutex<Option<dev::ServerHandle>>,
+
+    pub running: RwLock<bool>,
+    pub start_time: RwLock<DateTime<Utc>>,
+    pub stop_time: RwLock<Option<DateTime<Utc>>>,
 }
 
-impl StopHandle {
+impl ServerHandle {
     /// Sets the server handle and start blocking.
-    pub async fn start(&self, server: Server) -> Result<()> {
+    pub async fn start(&self, server: dev::Server) -> Result<()> {
         *self.inner.lock() = Some(server.handle());
+        *self.running.write() = true;
+        *self.start_time.write() = Utc::now();
+
         server.await.map_err(Into::into)
     }
 
     /// Sends stop signal through contained server handle.
     pub fn stop(&self, graceful: bool) {
+        *self.running.write() = false;
+        *self.stop_time.write() = Some(Utc::now());
         #[allow(clippy::let_underscore_future)]
         let _ = self.inner.lock().as_ref().unwrap().stop(graceful);
     }

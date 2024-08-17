@@ -12,7 +12,7 @@ pub struct RedisBackend {
 }
 
 impl RedisBackend {
-    pub async fn new(dsn: &str) -> Result<impl MemoryDB> {
+    pub async fn new(dsn: &str) -> Result<Self> {
         let client = ConnectionManager::new(redis::Client::open(dsn)?).await?;
         Ok(Self { client })
     }
@@ -20,79 +20,46 @@ impl RedisBackend {
 
 #[async_trait]
 impl MemoryDB for RedisBackend {
-    async fn set<S>(&self, key: S, value: S) -> Result<()>
-    where
-        S: Into<String> + Send,
-    {
+    async fn set(&self, key: &str, value: &str) -> Result<()> {
         self.client
             .clone()
-            .set(key.into(), value.into())
+            .set(key, value)
             .await
             .map_err(Into::into)
     }
 
-    async fn get<S>(&self, key: S) -> Result<Option<String>>
-    where
-        S: AsRef<str> + Send,
-    {
+    async fn get(&self, key: &str) -> Result<Option<String>> {
+        self.client.clone().get(key).await.map_err(Into::into)
+    }
+
+    async fn get_del(&self, key: &str) -> Result<Option<String>> {
+        self.client.clone().get_del(key).await.map_err(Into::into)
+    }
+
+    async fn get_ex(&self, key: &str, ttl: &Duration) -> Result<Option<String>> {
         self.client
             .clone()
-            .get(key.as_ref())
+            .get_ex(key, Expiry::EX(ttl.as_secs()))
             .await
             .map_err(Into::into)
     }
 
-    async fn get_del<S>(&self, key: S) -> Result<Option<String>>
-    where
-        S: AsRef<str> + Send,
-    {
+    async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> Result<()> {
         self.client
             .clone()
-            .get_del(key.as_ref())
+            .set_ex(key, value, ttl.as_secs())
             .await
             .map_err(Into::into)
     }
 
-    async fn get_ex<S>(&self, key: S, ttl: &Duration) -> Result<Option<String>>
-    where
-        S: AsRef<str> + Send,
-    {
-        self.client
-            .clone()
-            .get_ex(key.as_ref(), Expiry::EX(ttl.as_secs()))
-            .await
-            .map_err(Into::into)
+    async fn del(&self, key: &str) -> Result<bool> {
+        self.client.clone().del(key).await.map_err(Into::into)
     }
 
-    async fn set_ex<S>(&self, key: S, value: S, ttl: &Duration) -> Result<()>
-    where
-        S: Into<String> + Send,
-    {
+    async fn expire(&self, key: &str, ttl: i64) -> Result<bool> {
         self.client
             .clone()
-            .set_ex(key.into(), value.into(), ttl.as_secs())
-            .await
-            .map_err(Into::into)
-    }
-
-    async fn del<S>(&self, key: S) -> Result<bool>
-    where
-        S: AsRef<str> + Send,
-    {
-        self.client
-            .clone()
-            .del(key.as_ref())
-            .await
-            .map_err(Into::into)
-    }
-
-    async fn expire<S>(&self, key: S, ttl: i64) -> Result<bool>
-    where
-        S: AsRef<str> + Send,
-    {
-        self.client
-            .clone()
-            .expire(key.as_ref(), ttl)
+            .expire(key, ttl)
             .await
             .map_err(Into::into)
     }

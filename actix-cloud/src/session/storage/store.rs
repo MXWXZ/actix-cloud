@@ -51,7 +51,7 @@ where
 
     pub async fn load(&self, session_key: &SessionKey) -> Result<Option<SessionState>> {
         let cache_key = (self.configuration.cache_keygen)(session_key.as_ref());
-        let value = self.client.get(cache_key).await?;
+        let value = self.client.get(&cache_key).await?;
 
         match value {
             None => Ok(None),
@@ -65,7 +65,7 @@ where
         let cache_key = (self.configuration.cache_keygen)(session_key.as_ref());
 
         self.client
-            .set_ex(cache_key, body, &Self::parse_ttl(ttl))
+            .set_ex(&cache_key, &body, &Self::parse_ttl(ttl))
             .await?;
 
         Ok(session_key)
@@ -81,7 +81,7 @@ where
         let cache_key = (self.configuration.cache_keygen)(session_key.as_ref());
 
         self.client
-            .set_ex(cache_key, body, &Self::parse_ttl(ttl))
+            .set_ex(&cache_key, &body, &Self::parse_ttl(ttl))
             .await?;
         Ok(session_key)
     }
@@ -89,14 +89,14 @@ where
     pub async fn update_ttl(&self, session_key: &SessionKey, ttl: &Duration) -> Result<()> {
         let cache_key = (self.configuration.cache_keygen)(session_key.as_ref());
 
-        self.client.expire(cache_key, ttl.whole_seconds()).await?;
+        self.client.expire(&cache_key, ttl.whole_seconds()).await?;
         Ok(())
     }
 
     pub async fn delete(&self, session_key: &SessionKey) -> Result<()> {
         let cache_key = (self.configuration.cache_keygen)(session_key.as_ref());
 
-        self.client.del(cache_key).await?;
+        self.client.del(&cache_key).await?;
         Ok(())
     }
 

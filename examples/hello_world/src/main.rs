@@ -9,14 +9,17 @@ use actix_cloud::{
     },
     build_router,
     logger::LoggerBuilder,
-    memorydb::default::DefaultBackend,
+    request,
     router::Router,
     security::SecurityHeader,
-    state::{GlobalState, StopHandle},
+    state::{GlobalState, ServerHandle},
+    tracing::info,
+    tracing_actix_web::TracingLogger,
 };
 use qstring::QString;
 
 async fn guest_page() -> &'static str {
+    info!("what");
     "This is guest page, you can visit /api/guest directly."
 }
 
@@ -72,8 +75,7 @@ async fn main() -> io::Result<()> {
     // Init state.
     let state = GlobalState {
         logger,
-        memorydb: DefaultBackend::new().await.unwrap(),
-        stop_handle: StopHandle::default(),
+        server: ServerHandle::default(),
     }
     .build();
 
@@ -81,6 +83,9 @@ async fn main() -> io::Result<()> {
     let state_cloned = state.clone();
     let server = HttpServer::new(move || {
         App::new()
+            .wrap(middleware::Logger::default())
+            .wrap(request::Middleware::new())
+            .wrap(TracingLogger::default())
             .wrap(middleware::Compress::default()) // compress page
             .wrap(SecurityHeader::default().build()) // default security header
             .service(scope("/api").configure(build_router(init_router())))
@@ -90,6 +95,6 @@ async fn main() -> io::Result<()> {
     .run();
 
     // Block and wait for connection.
-    state.stop_handle.start(server).await.unwrap();
+    state.server.start(server).await.unwrap();
     Ok(())
 }

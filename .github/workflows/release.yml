@@ -1,0 +1,43 @@
+name: Check
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  check:
+    name: Check code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@v2
+      - name: Check
+        run: make check
+      - name: Run tests
+        run: make test
+
+  publish:
+    needs: check
+    name: Publish crate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@v2
+      - name: Login
+        run: cargo login ${{ secrets.CRATES_IO_TOKEN }}
+      - name: Push to crate.io
+        run: |
+          cd actix-cloud-codegen
+          cargo publish
+          cd -
+          cd actix-cloud
+          cargo publish
+          cd -
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
