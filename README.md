@@ -17,7 +17,7 @@ Actix Cloud is highly configurable. You can only enable needed features, impleme
   - config-json
   - config-yaml
   - config-toml
-- [request] (#request) (Embedded)
+- [request](#request) (Embedded)
 - [response](#response) (Default: Disable)
   - response-json
 - [traceid](#traceid) (Default: Disable)
