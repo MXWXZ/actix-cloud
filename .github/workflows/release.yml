@@ -23,6 +23,8 @@ jobs:
     needs: check
     name: Publish crate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Cache cargo & target directories
