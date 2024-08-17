@@ -1,7 +1,7 @@
 SHELL = /bin/bash
 
 .ONESHELL:
-.PHONY: check help doc test
+.PHONY: check help doc test test_dev
 
 all: help
 
@@ -14,9 +14,13 @@ check:
 doc:
 	@RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --no-deps --all-features --open
 
+## test_dev: Run tests for development.
+test_dev:
+	@cargo test --all-features
+
 ## test: Run tests.
 test:
-	@cargo test --all-features
+	@cargo test --all-features -- --skip memorydb::interface::tests
 
 ## help: Show this help.
 help: Makefile
