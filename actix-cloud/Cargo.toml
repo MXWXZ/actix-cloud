@@ -54,7 +54,7 @@ anyhow = "1.0.86"
 rand = "0.8.5"
 hex = "0.4.3"
 
-actix-cloud-codegen = { version = "0.1.1", path = "../actix-cloud-codegen" }
+actix-cloud-codegen = { version = "0.2.0", path = "../actix-cloud-codegen" }
 
 # serde
 serde = { version = "1.0.208", features = ["derive"], optional = true }
