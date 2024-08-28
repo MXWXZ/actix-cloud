@@ -21,6 +21,8 @@ Actix Cloud is highly configurable. You can only enable needed features, impleme
 - [response](#response) (Default: Disable)
   - response-json
 - [traceid](#traceid) (Default: Disable)
+- [seaorm](#seaorm) (Default: Disable)
+- [csrf](#csrf) (Default: Disable)
 
 ## Guide
 
@@ -115,27 +117,35 @@ RedisBackend::new("redis://user:pass@127.0.0.1:6379/0").await.unwrap(),
 ```
 
 ### auth
-Authentication is quite simple, you only need to implement an extractor and a checker.
-
-Extractor is used to extract your own authentication type from request. For example, assume we use 0 for guest and 1 for admin. Our authentication type is just `Vec<u32>`:
-```
-fn perm_extractor(req: &mut ServiceRequest) -> Vec<u32> {
-    let mut ret = Vec::new();
-    ret.push(0); // guest permission is assigned by default.
-
-    // test if query string has `admin=1`.
-    let qs = QString::from(req.query_string());
-    if qs.get("admin").is_some_and(|x| x == "1") {
-        ret.push(1);
-    }
-    ret
-}
-```
+Authentication is quite simple, you only need to implement a checker.
 
 Checker is used to check the permission, the server will return 403 if the return value is false:
 ```
-fn is_guest(p: Vec<u32>) -> bool {
-    p.into_iter().find(|x| *x == 0).is_some()
+struct AuthChecker {
+    need_admin: bool,
+}
+
+impl AuthChecker {
+    fn new(need_admin: bool) -> Self {
+        Self { need_admin }
+    }
+}
+
+#[async_trait(?Send)]
+impl Checker for AuthChecker {
+    async fn check(&self, req: &mut ServiceRequest) -> Result<bool> {
+        let qs = QString::from(req.query_string());
+        let is_admin = if qs.get("admin").is_some_and(|x| x == "1") {
+            true
+        } else {
+            false
+        };
+        if (is_admin && self.need_admin) || !self.need_admin {
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }
 ```
 
@@ -149,6 +159,9 @@ Most features and usages are based on [actix-session](https://crates.io/crates/a
 - MemoryDB is the only supported storage.
 - Error uses `actix-cloud::error::Error`.
 - You can set `_ttl` in the session to override the TTL of the session.
+- You can set `_id` in the session for reverse search.
+  - Quote(") will be trimmed.
+  - Another key will be set in memorydb: `{_id}_{session_key}`. You can use `keys` function to find all session key binding to a specific id.
 
 ```
 app.wrap(SessionMiddleware::builder(memorydb.clone(), Key::generate()).build())
@@ -167,7 +180,7 @@ Provide per-request extension.
 
 Built-in middleware:
 - Store in [extensions](https://docs.rs/actix-web/latest/actix_web/struct.HttpRequest.html#method.extensions_mut).
-- If `i18n` feature is enabled, language is identified through the `lang` query parameter, or `locale.default` in `GlobalState`.
+- If `i18n` feature is enabled, language is identified through the callback, or `locale.default` in `GlobalState`.
 
 Enable built-in middleware:
 ```
@@ -178,7 +191,11 @@ Usage:
 ```
 async fn handler(req: HttpRequest) -> impl Responder {
     let ext = req.extensions();
-    let ext = ext.get::<actix_cloud::request::Extension>().unwrap();
+    let ext = ext.get::<Arc<actix_cloud::request::Extension>>().unwrap();
+    ...
+}
+
+async fn handler(ext: ReqData<Arc<actix_cloud::request::Extension>>) -> impl Responder {
     ...
 }
 ```
@@ -205,6 +222,49 @@ app.wrap(request::Middleware::new())
 ```
 
 If you enable `request` feature, make sure it is before `TracingLogger` since the `trace_id` field is based on it.
+
+### seaorm
+Provide useful macros for [seaorm](https://crates.io/crates/sea-orm).
+
+```
+#[derive(...)]
+#[sea_orm(...)]
+pub struct Model {
+    #[sea_orm(primary_key, auto_increment = false)]
+    pub id: Uuid,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[entity_id(Uuid::new_v4())]    // generate new for `id` field.
+#[entity_timestamp]             // automatically handle `created_at` and `updated_at` field.
+impl ActiveModel {}
+
+#[entity_behavior]              // enable `entity_id` and `entity_timestamp`.
+impl ActiveModelBehavior for ActiveModel {}
+```
+
+### csrf
+We use [double submit](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html#alternative-using-a-double-submit-cookie-pattern) to protect against CSRF attacks.
+
+You can use `memorydb` to store and check CSRF tokens.
+
+By default, CSRF checker is applied to:
+- All [unsafe](https://developer.mozilla.org/en-US/docs/Glossary/Safe/HTTP) methods unless `CSRFType` is `Disabled`.
+- All methods if `CSRFType` is `ForceHeader` or `ForceParam`.
+
+Generally, `Param` and `ForceParam` type should only be used for websocket.
+
+```
+build_router(
+    route,
+    csrf::Middleware::new(
+        String::from("CSRF_TOKEN"),     // csrf cookie
+        String::from("X-CSRF-Token"),   // csrf header/param
+        |req, token| Box::pin(async { Ok(true) })          // csrf checker
+    ),
+);
+```
 
 ## License
 This project is licensed under the [MIT license](LICENSE).

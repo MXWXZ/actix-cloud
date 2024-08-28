@@ -70,4 +70,18 @@ impl MemoryDB for RedisBackend {
             .await
             .map_err(Into::into)
     }
+
+    async fn keys(&self, key: &str) -> Result<Vec<String>> {
+        self.client.clone().keys(key).await.map_err(Into::into)
+    }
+
+    async fn dels(&self, keys: &[String]) -> Result<u64> {
+        let mut p = redis::pipe();
+        let mut p = p.atomic();
+        for i in keys {
+            p = p.del(i);
+        }
+        let res: Vec<u64> = p.query_async(&mut self.client.clone()).await?;
+        Ok(res.into_iter().sum())
+    }
 }

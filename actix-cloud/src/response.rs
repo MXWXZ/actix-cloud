@@ -9,6 +9,8 @@ use actix_web::{
 };
 use futures::{future, stream::once};
 
+pub type RspResult<T> = Result<T, ResponseError>;
+
 #[derive(Debug)]
 pub struct ResponseError(anyhow::Error);
 
@@ -229,7 +231,10 @@ impl<T> Response<T> {
                 .map_or_else(
                     || self.message.clone(),
                     |state| {
-                        if let Some(ext) = req.extensions().get::<crate::request::Extension>() {
+                        if let Some(ext) = req
+                            .extensions()
+                            .get::<std::sync::Arc<crate::request::Extension>>()
+                        {
                             crate::t!(state.locale, &self.message, &ext.lang)
                         } else {
                             self.message.clone()

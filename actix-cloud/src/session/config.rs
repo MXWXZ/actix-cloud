@@ -1,95 +1,12 @@
 //! Configuration options to tune the behaviour of [`SessionMiddleware`].
 
+use std::sync::Arc;
+
 use actix_web::cookie::{time::Duration, Key, SameSite};
 
 use crate::memorydb::MemoryDB;
 
 use super::{storage::SessionStore, SessionMiddleware};
-
-/// Determines what type of session cookie should be used and how its lifecycle should be managed.
-///
-/// Used by [`SessionMiddlewareBuilder::session_lifecycle`].
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum SessionLifecycle {
-    /// The session cookie will expire when the current browser session ends.
-    ///
-    /// When does a browser session end? It depends on the browser! Chrome, for example, will often
-    /// continue running in the background when the browser is closed—session cookies are not
-    /// deleted and they will still be available when the browser is opened again.
-    /// Check the documentation of the browsers you are targeting for up-to-date information.
-    BrowserSession(BrowserSession),
-
-    /// The session cookie will be a [persistent cookie].
-    ///
-    /// Persistent cookies have a pre-determined lifetime, specified via the `Max-Age` or `Expires`
-    /// attribute. They do not disappear when the current browser session ends.
-    ///
-    /// [persistent cookie]: https://www.whitehatsec.com/glossary/content/persistent-session-cookie
-    PersistentSession(PersistentSession),
-}
-
-/// A [session lifecycle](SessionLifecycle) strategy where the session cookie expires when the
-/// browser's current session ends.
-///
-/// When does a browser session end? It depends on the browser. Chrome, for example, will often
-/// continue running in the background when the browser is closed—session cookies are not deleted
-/// and they will still be available when the browser is opened again. Check the documentation of
-/// the browsers you are targeting for up-to-date information.
-///
-/// Due to its `Into<SessionLifecycle>` implementation, a `BrowserSession` can be passed directly
-/// to [`SessionMiddlewareBuilder::session_lifecycle()`].
-#[derive(Debug, Clone)]
-pub struct BrowserSession {
-    state_ttl: Duration,
-    state_ttl_extension_policy: TtlExtensionPolicy,
-}
-
-impl BrowserSession {
-    /// Sets a time-to-live (TTL) when storing the session state in the storage backend.
-    ///
-    /// We do not want to store session states indefinitely, otherwise we will inevitably run out of
-    /// storage by holding on to the state of countless abandoned or expired sessions!
-    ///
-    /// We are dealing with the lifecycle of two uncorrelated object here: the session cookie
-    /// and the session state. It is not a big issue if the session state outlives the cookie—
-    /// we are wasting some space in the backend storage, but it will be cleaned up eventually.
-    /// What happens, instead, if the cookie outlives the session state? A new session starts—
-    /// e.g. if sessions are being used for authentication, the user is de-facto logged out.
-    ///
-    /// It is not possible to predict with certainty how long a browser session is going to
-    /// last—you need to provide a reasonable upper bound. You do so via `state_ttl`—it dictates
-    /// what TTL should be used for session state when the lifecycle of the session cookie is
-    /// tied to the browser session length. [`SessionMiddleware`] will default to 1 day if
-    /// `state_ttl` is left unspecified.
-    ///
-    /// You can mitigate the risk of the session cookie outliving the session state by
-    /// specifying a more aggressive state TTL extension policy - check out
-    /// [`BrowserSession::state_ttl_extension_policy`] for more details.
-    pub fn state_ttl(mut self, ttl: Duration) -> Self {
-        self.state_ttl = ttl;
-        self
-    }
-
-    /// Determine under what circumstances the TTL of your session state should be extended.
-    ///
-    /// Defaults to [`TtlExtensionPolicy::OnStateChanges`] if left unspecified.
-    ///
-    /// See [`TtlExtensionPolicy`] for more details.
-    pub fn state_ttl_extension_policy(mut self, ttl_extension_policy: TtlExtensionPolicy) -> Self {
-        self.state_ttl_extension_policy = ttl_extension_policy;
-        self
-    }
-}
-
-impl Default for BrowserSession {
-    fn default() -> Self {
-        Self {
-            state_ttl: default_ttl(),
-            state_ttl_extension_policy: default_ttl_extension_policy(),
-        }
-    }
-}
 
 /// A [session lifecycle](SessionLifecycle) strategy where the session cookie will be [persistent].
 ///
@@ -213,13 +130,13 @@ pub(crate) const fn default_ttl_extension_policy() -> TtlExtensionPolicy {
 
 /// A fluent, customized [`SessionMiddleware`] builder.
 #[must_use]
-pub struct SessionMiddlewareBuilder<M: MemoryDB> {
-    storage_backend: SessionStore<M>,
+pub struct SessionMiddlewareBuilder {
+    storage_backend: SessionStore,
     configuration: Configuration,
 }
 
-impl<M: MemoryDB> SessionMiddlewareBuilder<M> {
-    pub(crate) fn new(client: M, configuration: Configuration) -> Self {
+impl SessionMiddlewareBuilder {
+    pub(crate) fn new(client: Arc<dyn MemoryDB>, configuration: Configuration) -> Self {
         Self {
             storage_backend: SessionStore::new(client),
             configuration,
@@ -253,29 +170,11 @@ impl<M: MemoryDB> SessionMiddlewareBuilder<M> {
         self
     }
 
-    /// Determines what type of session cookie should be used and how its lifecycle should be managed.
-    /// Check out [`SessionLifecycle`]'s documentation for more details on the available options.
-    ///
-    /// Default is [`SessionLifecycle::BrowserSession`].
-    pub fn session_lifecycle<S: Into<SessionLifecycle>>(mut self, session_lifecycle: S) -> Self {
-        match session_lifecycle.into() {
-            SessionLifecycle::BrowserSession(BrowserSession {
-                state_ttl,
-                state_ttl_extension_policy,
-            }) => {
-                self.configuration.cookie.max_age = None;
-                self.configuration.session.state_ttl = state_ttl;
-                self.configuration.ttl_extension_policy = state_ttl_extension_policy;
-            }
-            SessionLifecycle::PersistentSession(PersistentSession {
-                session_ttl,
-                ttl_extension_policy,
-            }) => {
-                self.configuration.cookie.max_age = Some(session_ttl);
-                self.configuration.session.state_ttl = session_ttl;
-                self.configuration.ttl_extension_policy = ttl_extension_policy;
-            }
-        }
+    /// Determines how session lifecycle should be managed.
+    pub fn session_lifecycle(mut self, session_lifecycle: PersistentSession) -> Self {
+        self.configuration.cookie.max_age = Some(session_lifecycle.session_ttl);
+        self.configuration.session.state_ttl = session_lifecycle.session_ttl;
+        self.configuration.ttl_extension_policy = session_lifecycle.ttl_extension_policy;
 
         self
     }
@@ -339,7 +238,7 @@ impl<M: MemoryDB> SessionMiddlewareBuilder<M> {
 
     /// Finalise the builder and return a [`SessionMiddleware`] instance.
     #[must_use]
-    pub fn build(self) -> SessionMiddleware<M> {
+    pub fn build(self) -> SessionMiddleware {
         SessionMiddleware::from_parts(self.storage_backend, self.configuration)
     }
 }

@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, fmt, future::Future, pin::Pin, rc::Rc};
+use std::{borrow::Cow, collections::HashMap, fmt, future::Future, pin::Pin, rc::Rc, sync::Arc};
 
 use actix_utils::future::{ready, Ready};
 use actix_web::{
@@ -43,19 +43,19 @@ use crate::{memorydb::MemoryDB, Result};
 /// we will not stop you. But being a subject-matter expert should not be a requirement to deploy
 /// reasonably secure implementation of sessions.
 #[derive(Clone)]
-pub struct SessionMiddleware<M: MemoryDB> {
-    storage_backend: Rc<SessionStore<M>>,
+pub struct SessionMiddleware {
+    storage_backend: Rc<SessionStore>,
     configuration: Rc<Configuration>,
 }
 
-impl<M: MemoryDB> SessionMiddleware<M> {
+impl SessionMiddleware {
     /// Use [`SessionMiddleware::new`] to initialize the session framework using the default
     /// parameters.
     ///
     /// To create a new instance of [`SessionMiddleware`] you need to provide:
     /// - an instance of the session storage backend you wish to use (i.e. an implementation of SessionStore);
     /// - a secret key, to sign or encrypt the content of client-side session cookie.
-    pub fn new(client: M, key: Key) -> Self {
+    pub fn new(client: Arc<dyn MemoryDB>, key: Key) -> Self {
         Self::builder(client, key).build()
     }
 
@@ -64,11 +64,11 @@ impl<M: MemoryDB> SessionMiddleware<M> {
     /// It takes as input the two required inputs to create a new instance of [`SessionMiddleware`]:
     /// - an instance of the session storage backend you wish to use (i.e. an implementation of SessionStore);
     /// - a secret key, to sign or encrypt the content of client-side session cookie.
-    pub fn builder(client: M, key: Key) -> SessionMiddlewareBuilder<M> {
+    pub fn builder(client: Arc<dyn MemoryDB>, key: Key) -> SessionMiddlewareBuilder {
         SessionMiddlewareBuilder::new(client, config::default_configuration(key))
     }
 
-    pub(crate) fn from_parts(store: SessionStore<M>, configuration: Configuration) -> Self {
+    pub(crate) fn from_parts(store: SessionStore, configuration: Configuration) -> Self {
         Self {
             storage_backend: Rc::new(store),
             configuration: Rc::new(configuration),
@@ -76,16 +76,15 @@ impl<M: MemoryDB> SessionMiddleware<M> {
     }
 }
 
-impl<S, B, M> Transform<S, ServiceRequest> for SessionMiddleware<M>
+impl<S, B> Transform<S, ServiceRequest> for SessionMiddleware
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = actix_web::Error> + 'static,
     S::Future: 'static,
     B: MessageBody + 'static,
-    M: MemoryDB + 'static,
 {
     type Response = ServiceResponse<B>;
     type Error = actix_web::Error;
-    type Transform = InnerSessionMiddleware<S, M>;
+    type Transform = InnerSessionMiddleware<S>;
     type InitError = ();
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
@@ -116,17 +115,16 @@ fn e500<E: fmt::Debug + fmt::Display + 'static>(err: E) -> actix_web::Error {
 
 #[doc(hidden)]
 #[non_exhaustive]
-pub struct InnerSessionMiddleware<S, M: MemoryDB> {
+pub struct InnerSessionMiddleware<S> {
     service: Rc<S>,
     configuration: Rc<Configuration>,
-    storage_backend: Rc<SessionStore<M>>,
+    storage_backend: Rc<SessionStore>,
 }
 
-impl<S, B, M> Service<ServiceRequest> for InnerSessionMiddleware<S, M>
+impl<S, B> Service<ServiceRequest> for InnerSessionMiddleware<S>
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = actix_web::Error> + 'static,
     S::Future: 'static,
-    M: MemoryDB + 'static,
 {
     type Response = ServiceResponse<B>;
     type Error = actix_web::Error;
@@ -160,6 +158,9 @@ where
                     cookie = Cow::Owned(tmp);
                 }
             }
+            let id = session_state
+                .get("_id")
+                .map(|x| x.trim_matches('"').to_owned());
 
             match session_key {
                 None => {
@@ -167,7 +168,7 @@ where
                     // to a fresh session
                     if !session_state.is_empty() {
                         let session_key = storage_backend
-                            .save(session_state, &ttl)
+                            .save(session_state, &id, &ttl)
                             .await
                             .map_err(e500)?;
 
@@ -180,7 +181,7 @@ where
                     match status {
                         SessionStatus::Changed => {
                             let session_key = storage_backend
-                                .update(session_key, session_state, &ttl)
+                                .update(session_key, session_state, &id, &ttl)
                                 .await
                                 .map_err(e500)?;
 
@@ -189,17 +190,23 @@ where
                         }
 
                         SessionStatus::Purged => {
-                            storage_backend.delete(&session_key).await.map_err(e500)?;
+                            storage_backend
+                                .delete(&session_key, &id)
+                                .await
+                                .map_err(e500)?;
 
                             delete_session_cookie(res.response_mut().head_mut(), &cookie)
                                 .map_err(e500)?;
                         }
 
                         SessionStatus::Renewed => {
-                            storage_backend.delete(&session_key).await.map_err(e500)?;
+                            storage_backend
+                                .delete(&session_key, &id)
+                                .await
+                                .map_err(e500)?;
 
                             let session_key = storage_backend
-                                .save(session_state, &ttl)
+                                .save(session_state, &id, &ttl)
                                 .await
                                 .map_err(e500)?;
 
@@ -213,7 +220,7 @@ where
                                 TtlExtensionPolicy::OnEveryRequest
                             ) {
                                 storage_backend
-                                    .update_ttl(&session_key, &ttl)
+                                    .update_ttl(&session_key, &id, &ttl)
                                     .await
                                     .map_err(e500)?;
 
@@ -258,9 +265,9 @@ fn extract_session_key(req: &ServiceRequest, config: &CookieConfiguration) -> Op
     verification_result?.value().to_owned().try_into().ok()
 }
 
-async fn load_session_state<M: MemoryDB>(
+async fn load_session_state(
     session_key: Option<SessionKey>,
-    storage_backend: &SessionStore<M>,
+    storage_backend: &SessionStore,
 ) -> Result<(Option<SessionKey>, HashMap<String, String>), actix_web::Error> {
     if let Some(session_key) = session_key {
         match storage_backend.load(&session_key).await {

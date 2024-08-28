@@ -4,23 +4,35 @@ use std::{
     rc::Rc,
 };
 
+#[cfg(feature = "csrf")]
+use actix_web::HttpMessage;
 use actix_web::{
     body::EitherBody,
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     web::ServiceConfig,
     HttpResponse, Route,
 };
+use anyhow::Result;
+use async_trait::async_trait;
 use futures::future::LocalBoxFuture;
 
-pub fn build_router<T: 'static>(router: Vec<Router<T>>) -> impl FnOnce(&mut ServiceConfig) {
-    |cfg| {
+#[cfg(feature = "csrf")]
+pub fn build_router<F, Fut>(
+    router: Vec<Router>,
+    csrf: crate::csrf::Middleware<F>,
+) -> impl FnOnce(&mut ServiceConfig)
+where
+    F: Fn(actix_web::HttpRequest, String) -> Fut + 'static,
+    Fut: futures::Future<Output = Result<bool, actix_web::Error>>,
+{
+    move |cfg| {
         for i in router {
             if !i.path.is_empty() {
                 cfg.route(
                     &i.path,
-                    i.route.wrap(RouterGuard {
-                        extractor: Rc::new(i.extractor),
-                        checker: Rc::new(i.checker),
+                    i.route.wrap(csrf.clone()).wrap(RouterGuard {
+                        checker: i.checker,
+                        csrf: i.csrf,
                     }),
                 );
             }
@@ -28,64 +40,80 @@ pub fn build_router<T: 'static>(router: Vec<Router<T>>) -> impl FnOnce(&mut Serv
     }
 }
 
-pub struct Router<T> {
-    pub path: String,
-    pub route: Route,
-    pub extractor: Box<dyn Fn(&mut ServiceRequest) -> T>,
-    pub checker: Box<dyn Fn(T) -> bool>,
-}
-
-pub(crate) struct RouterGuard<E, C, T>
-where
-    E: Fn(&mut ServiceRequest) -> T + 'static,
-    C: Fn(T) -> bool + 'static,
-{
-    extractor: Rc<E>,
-    checker: Rc<C>,
-}
-
-impl<S: 'static, B, E, C, T> Transform<S, ServiceRequest> for RouterGuard<E, C, T>
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = actix_web::Error>,
-    S::Future: 'static,
-    B: 'static + Debug,
-    E: Fn(&mut ServiceRequest) -> T + 'static,
-    C: Fn(T) -> bool + 'static,
-{
-    type Response = ServiceResponse<EitherBody<B>>;
-    type Error = actix_web::Error;
-    type InitError = ();
-    type Transform = RouterGuardMiddleware<S, E, C, T>;
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
-
-    fn new_transform(&self, service: S) -> Self::Future {
-        let extractor = self.extractor.clone();
-        let checker = self.checker.clone();
-        ready(Ok(RouterGuardMiddleware {
-            service: Rc::new(service),
-            extractor,
-            checker,
-        }))
+#[cfg(not(feature = "csrf"))]
+pub fn build_router(router: Vec<Router>) -> impl FnOnce(&mut ServiceConfig) {
+    |cfg| {
+        for i in router {
+            if !i.path.is_empty() {
+                cfg.route(&i.path, i.route.wrap(RouterGuard { checker: i.checker }));
+            }
+        }
     }
 }
 
-pub(crate) struct RouterGuardMiddleware<S, E, C, T>
-where
-    E: Fn(&mut ServiceRequest) -> T + 'static,
-    C: Fn(T) -> bool + 'static,
-{
-    service: Rc<S>,
-    extractor: Rc<E>,
-    checker: Rc<C>,
+#[async_trait(?Send)]
+pub trait Checker {
+    async fn check(&self, req: &mut ServiceRequest) -> Result<bool>;
 }
 
-impl<S, B, E, C, T> Service<ServiceRequest> for RouterGuardMiddleware<S, E, C, T>
+#[cfg(feature = "csrf")]
+#[derive(Clone, Copy, enum_as_inner::EnumAsInner)]
+pub enum CSRFType {
+    Header,
+    Param,
+    ForceHeader,
+    ForceParam,
+    Disabled,
+}
+
+pub struct Router {
+    pub path: String,
+    pub route: Route,
+    pub checker: Option<Rc<dyn Checker>>,
+    #[cfg(feature = "csrf")]
+    pub csrf: CSRFType,
+}
+
+pub(crate) struct RouterGuard {
+    checker: Option<Rc<dyn Checker>>,
+    #[cfg(feature = "csrf")]
+    csrf: CSRFType,
+}
+
+impl<S, B> Transform<S, ServiceRequest> for RouterGuard
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = actix_web::Error> + 'static,
     S::Future: 'static,
     B: 'static + Debug,
-    E: Fn(&mut ServiceRequest) -> T + 'static,
-    C: Fn(T) -> bool + 'static,
+{
+    type Response = ServiceResponse<EitherBody<B>>;
+    type Error = actix_web::Error;
+    type InitError = ();
+    type Transform = RouterGuardMiddleware<S>;
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(RouterGuardMiddleware {
+            service: Rc::new(service),
+            checker: self.checker.clone(),
+            #[cfg(feature = "csrf")]
+            csrf: self.csrf,
+        }))
+    }
+}
+
+pub(crate) struct RouterGuardMiddleware<S> {
+    service: Rc<S>,
+    checker: Option<Rc<dyn Checker>>,
+    #[cfg(feature = "csrf")]
+    csrf: CSRFType,
+}
+
+impl<S, B> Service<ServiceRequest> for RouterGuardMiddleware<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = actix_web::Error> + 'static,
+    S::Future: 'static,
+    B: 'static + Debug,
 {
     type Response = ServiceResponse<EitherBody<B>>;
     type Error = actix_web::Error;
@@ -95,14 +123,29 @@ where
 
     fn call(&self, mut req: ServiceRequest) -> Self::Future {
         let srv = self.service.clone();
-        let extractor = self.extractor.clone();
         let checker = self.checker.clone();
+        #[cfg(feature = "csrf")]
+        req.extensions_mut().insert(self.csrf);
         Box::pin(async move {
-            let perm = extractor(&mut req);
-            if checker(perm) {
-                Ok(srv.call(req).await?.map_into_left_body())
+            if let Some(checker) = checker {
+                match checker.check(&mut req).await {
+                    Ok(ok) => {
+                        if ok {
+                            Ok(srv.call(req).await?.map_into_left_body())
+                        } else {
+                            Ok(req.into_response(
+                                HttpResponse::Forbidden().finish().map_into_right_body(),
+                            ))
+                        }
+                    }
+                    Err(_) => Ok(req.into_response(
+                        HttpResponse::InternalServerError()
+                            .finish()
+                            .map_into_right_body(),
+                    )),
+                }
             } else {
-                Ok(req.into_response(HttpResponse::Forbidden().finish().map_into_right_body()))
+                Ok(srv.call(req).await?.map_into_left_body())
             }
         })
     }

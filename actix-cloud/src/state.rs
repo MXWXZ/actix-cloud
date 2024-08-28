@@ -7,14 +7,14 @@ use crate::Result;
 
 pub struct GlobalState {
     #[cfg(feature = "memorydb")]
-    pub memorydb: Box<dyn crate::memorydb::interface::MemoryDB>,
+    pub memorydb: std::sync::Arc<dyn crate::memorydb::interface::MemoryDB>,
 
     #[cfg(feature = "config")]
     pub config: config::Config,
 
     #[cfg(feature = "logger")]
     /// Global logger.
-    pub logger: crate::logger::Logger,
+    pub logger: Option<crate::logger::Logger>,
 
     #[cfg(feature = "i18n")]
     pub locale: crate::i18n::Locale,

@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use anyhow::anyhow;
 use async_trait::async_trait;
 use chrono::Utc;
+use glob::Pattern;
 use parking_lot::RwLock;
 
 use super::interface::MemoryDB;
@@ -153,5 +154,27 @@ impl MemoryDB for DefaultBackend {
     async fn flush(&self) -> Result<()> {
         self.data.write().clear();
         Ok(())
+    }
+
+    async fn keys(&self, key: &str) -> Result<Vec<String>> {
+        let mut ret = Vec::new();
+        let p = Pattern::new(key)?;
+        for (k, v) in self.data.read().iter() {
+            if v.valid()? && p.matches(k) {
+                ret.push(k.to_owned());
+            }
+        }
+        Ok(ret)
+    }
+
+    async fn dels(&self, keys: &[String]) -> Result<u64> {
+        let mut wlock = self.data.write();
+        let mut sum = 0;
+        for i in keys {
+            if wlock.remove(i).is_some() {
+                sum += 1;
+            }
+        }
+        Ok(sum)
     }
 }

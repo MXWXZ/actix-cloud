@@ -9,12 +9,9 @@ use crate::{memorydb::MemoryDB, Result};
 pub(crate) type SessionState = HashMap<String, String>;
 
 #[derive(Clone)]
-pub struct SessionStore<M>
-where
-    M: MemoryDB,
-{
+pub struct SessionStore {
     configuration: CacheConfiguration,
-    client: M,
+    client: Arc<dyn MemoryDB>,
 }
 
 #[derive(Clone)]
@@ -30,11 +27,8 @@ impl Default for CacheConfiguration {
     }
 }
 
-impl<M> SessionStore<M>
-where
-    M: MemoryDB,
-{
-    pub fn new(client: M) -> Self {
+impl SessionStore {
+    pub fn new(client: Arc<dyn MemoryDB>) -> Self {
         Self {
             client,
             configuration: CacheConfiguration::default(),
@@ -59,7 +53,12 @@ where
         }
     }
 
-    pub async fn save(&self, session_state: SessionState, ttl: &Duration) -> Result<SessionKey> {
+    pub async fn save(
+        &self,
+        session_state: SessionState,
+        id: &Option<String>,
+        ttl: &Duration,
+    ) -> Result<SessionKey> {
         let body = serde_json::to_string(&session_state)?;
         let session_key = generate_session_key();
         let cache_key = (self.configuration.cache_keygen)(session_key.as_ref());
@@ -68,6 +67,12 @@ where
             .set_ex(&cache_key, &body, &Self::parse_ttl(ttl))
             .await?;
 
+        if let Some(id) = id {
+            let key =
+                (self.configuration.cache_keygen)(&format!("{}_{}", id, session_key.as_ref()));
+            self.client.set_ex(&key, "1", &Self::parse_ttl(ttl)).await?;
+        }
+
         Ok(session_key)
     }
 
@@ -75,6 +80,7 @@ where
         &self,
         session_key: SessionKey,
         session_state: SessionState,
+        id: &Option<String>,
         ttl: &Duration,
     ) -> Result<SessionKey> {
         let body = serde_json::to_string(&session_state)?;
@@ -83,20 +89,42 @@ where
         self.client
             .set_ex(&cache_key, &body, &Self::parse_ttl(ttl))
             .await?;
+
+        if let Some(id) = id {
+            let key =
+                (self.configuration.cache_keygen)(&format!("{}_{}", id, session_key.as_ref()));
+            self.client.set_ex(&key, "1", &Self::parse_ttl(ttl)).await?;
+        }
+
         Ok(session_key)
     }
 
-    pub async fn update_ttl(&self, session_key: &SessionKey, ttl: &Duration) -> Result<()> {
+    pub async fn update_ttl(
+        &self,
+        session_key: &SessionKey,
+        id: &Option<String>,
+        ttl: &Duration,
+    ) -> Result<()> {
         let cache_key = (self.configuration.cache_keygen)(session_key.as_ref());
 
         self.client.expire(&cache_key, ttl.whole_seconds()).await?;
+        if let Some(id) = id {
+            let key =
+                (self.configuration.cache_keygen)(&format!("{}_{}", id, session_key.as_ref()));
+            self.client.expire(&key, ttl.whole_seconds()).await?;
+        }
         Ok(())
     }
 
-    pub async fn delete(&self, session_key: &SessionKey) -> Result<()> {
+    pub async fn delete(&self, session_key: &SessionKey, id: &Option<String>) -> Result<()> {
         let cache_key = (self.configuration.cache_keygen)(session_key.as_ref());
 
         self.client.del(&cache_key).await?;
+        if let Some(id) = id {
+            let key =
+                (self.configuration.cache_keygen)(&format!("{}_{}", id, session_key.as_ref()));
+            self.client.del(&key).await?;
+        }
         Ok(())
     }
 

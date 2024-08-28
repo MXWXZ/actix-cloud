@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, rc::Rc};
 
 use actix_cloud::{
     actix_web::{
@@ -7,19 +7,18 @@ use actix_cloud::{
         web::{get, scope},
         App, HttpServer,
     },
-    build_router,
+    async_trait, build_router,
     logger::LoggerBuilder,
     request,
-    router::Router,
+    router::{Checker, Router},
     security::SecurityHeader,
     state::{GlobalState, ServerHandle},
-    tracing::info,
     tracing_actix_web::TracingLogger,
+    Result,
 };
 use qstring::QString;
 
 async fn guest_page() -> &'static str {
-    info!("what");
     "This is guest page, you can visit /api/guest directly."
 }
 
@@ -27,41 +26,44 @@ async fn admin_page() -> &'static str {
     "This is admin page, you need to use /api/admin?admin=1 to visit."
 }
 
-// We assume guest permission has id 0.
-fn is_guest(p: Vec<u32>) -> bool {
-    p.into_iter().find(|x| *x == 0).is_some()
+struct AuthChecker {
+    need_admin: bool,
 }
 
-// We assume admin permission has id 1.
-fn is_admin(p: Vec<u32>) -> bool {
-    p.into_iter().find(|x| *x == 1).is_some()
-}
-
-fn perm_extractor(req: &mut ServiceRequest) -> Vec<u32> {
-    let mut ret = Vec::new();
-    ret.push(0); // guest permission is assigned by default.
-
-    // test if query string has `admin=1`.
-    let qs = QString::from(req.query_string());
-    if qs.get("admin").is_some_and(|x| x == "1") {
-        ret.push(1);
+impl AuthChecker {
+    fn new(need_admin: bool) -> Self {
+        Self { need_admin }
     }
-    ret
 }
 
-fn init_router() -> Vec<Router<Vec<u32>>> {
+#[async_trait(?Send)]
+impl Checker for AuthChecker {
+    async fn check(&self, req: &mut ServiceRequest) -> Result<bool> {
+        let qs = QString::from(req.query_string());
+        let is_admin = if qs.get("admin").is_some_and(|x| x == "1") {
+            true
+        } else {
+            false
+        };
+        if (is_admin && self.need_admin) || !self.need_admin {
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+fn init_router() -> Vec<Router> {
     vec![
         Router {
             path: String::from("/guest"),
             route: get().to(guest_page),
-            extractor: Box::new(perm_extractor),
-            checker: Box::new(is_guest),
+            checker: Some(Rc::new(AuthChecker::new(false))),
         },
         Router {
             path: String::from("/admin"),
             route: get().to(admin_page),
-            extractor: Box::new(perm_extractor),
-            checker: Box::new(is_admin),
+            checker: Some(Rc::new(AuthChecker::new(true))),
         },
     ]
 }
@@ -70,11 +72,11 @@ fn init_router() -> Vec<Router<Vec<u32>>> {
 #[actix_cloud::main]
 async fn main() -> io::Result<()> {
     // Start logger.
-    let logger = LoggerBuilder::new().start();
+    let (logger, _guard) = LoggerBuilder::new().start();
 
     // Init state.
     let state = GlobalState {
-        logger,
+        logger: Some(logger),
         server: ServerHandle::default(),
     }
     .build();

@@ -1,6 +1,6 @@
 [package]
 name = "actix-cloud"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["MXWXZ <matrixwxz@gmail.com>"]
 description = "Actix Cloud is an all-in-one web framework based on Actix Web."
@@ -18,12 +18,12 @@ categories = [
 [features]
 default = ["logger"]
 serde = ["dep:serde", "dep:serde_json", "dep:serde_with"]
-memorydb = []
+memorydb = ["dep:glob"]
 redis = ["dep:redis", "memorydb"]
 rustls = ["actix-web/rustls-0_23", "dep:rustls", "dep:rustls-pemfile"]
 logger = ["dep:tracing", "dep:tracing-subscriber", "dep:colored", "serde"]
-i18n = ["actix-cloud-codegen/i18n", "dep:qstring"]
-session = ["dep:actix-utils", "serde", "dep:rand", "memorydb"]
+i18n = ["actix-cloud-codegen/i18n"]
+session = ["dep:actix-utils", "serde", "memorydb"]
 config = ["dep:config"]
 config-json = ["config", "config/json"]
 config-yaml = ["config", "config/yaml"]
@@ -39,6 +39,8 @@ response-build = [
     "dep:prettyplease",
 ]
 traceid = ["dep:tracing-actix-web"]
+seaorm = ["actix-cloud-codegen/seaorm"]
+csrf = ["dep:qstring", "dep:enum-as-inner"]
 
 [dependencies]
 actix-web = { version = "4.9.0", features = ["secure-cookies"] }
@@ -49,6 +51,8 @@ async-trait = "0.1.81"
 chrono = "0.4.38"
 futures = "0.3.30"
 anyhow = "1.0.86"
+rand = "0.8.5"
+hex = "0.4.3"
 
 actix-cloud-codegen = { version = "0.1.1", path = "../actix-cloud-codegen" }
 
@@ -73,11 +77,10 @@ redis = { version = "0.26.1", features = [
 
 # rustls
 rustls = { version = "0.23.12", optional = true }
-rustls-pemfile = { version = "2.1.3", optional = true }
+rustls-pemfile = { version = "2.1.2", optional = true }
 
 # session
 actix-utils = { version = "3.0.1", optional = true }
-rand = { version = "0.8.5", optional = true }
 
 # config
 config = { version = "0.14.0", optional = true }
@@ -89,11 +92,15 @@ quote = { version = "1.0.36", optional = true }
 syn = { version = "2.0.74", optional = true }
 prettyplease = { version = "0.2.20", optional = true }
 
-# i18n
-qstring = { version = "0.7.2", optional = true }
-
 # traceid
 tracing-actix-web = { version = "0.7.11", optional = true }
+
+# memorydb
+glob = { version = "0.3.1", optional = true }
+
+# csrf
+qstring = { version = "0.7.2", optional = true }
+enum-as-inner = { version = "0.6.0", optional = true }
 
 [package.metadata.docs.rs]
 all-features = true

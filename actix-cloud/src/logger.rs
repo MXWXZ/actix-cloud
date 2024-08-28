@@ -2,16 +2,20 @@ use std::{
     fmt::Write as _,
     io::{self, stderr, stdout, Write},
     str::FromStr,
-    sync::mpsc::{self, Sender},
-    thread,
+    thread::{self, JoinHandle},
 };
 
 use crate::Result;
 use chrono::{DateTime, Local, Utc};
 use colored::{Color, Colorize as _};
+use futures::executor::block_on;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use serde_with::{serde_as, DisplayFromStr};
+use tokio::{
+    select,
+    sync::mpsc::{unbounded_channel, UnboundedSender},
+};
 use tracing::Level;
 
 #[serde_as]
@@ -77,7 +81,7 @@ impl LogItem {
 }
 
 struct LogSender {
-    tx: Sender<Map<String, Value>>,
+    tx: UnboundedSender<Map<String, Value>>,
 }
 
 impl Write for LogSender {
@@ -95,24 +99,25 @@ impl Write for LogSender {
 }
 
 impl LogSender {
-    fn new(tx: Sender<Map<String, Value>>) -> impl Fn() -> Self {
+    fn new(tx: UnboundedSender<Map<String, Value>>) -> impl Fn() -> Self {
         move || Self { tx: tx.clone() }
     }
 }
 
+#[derive(Clone)]
 pub struct Logger {
-    tx: Sender<Map<String, Value>>,
+    tx: UnboundedSender<Map<String, Value>>,
 }
 
 impl Logger {
     /// Get logger sender.
-    pub fn sender(&self) -> Sender<Map<String, Value>> {
+    pub fn sender(&self) -> UnboundedSender<Map<String, Value>> {
         self.tx.clone()
     }
 
     /// Init tracing logger.
     /// A new subscriber will be registered.
-    pub fn init(&self, builder: LoggerBuilder) {
+    pub fn init(&self, builder: &LoggerBuilder) {
         tracing_subscriber::fmt()
             .with_max_level(builder.level)
             .with_writer(LogSender::new(self.tx.clone()))
@@ -127,6 +132,20 @@ impl Logger {
 pub type WriterFn = Box<dyn Fn(LogItem, Box<dyn Write>) -> Result<()> + Send>;
 pub type FilterFn = Box<dyn Fn(&LogItem) -> bool + Send>;
 pub type TransformerFn = Box<dyn Fn(LogItem) -> LogItem + Send>;
+
+pub struct LoggerGuard {
+    stop_tx: UnboundedSender<()>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl Drop for LoggerGuard {
+    fn drop(&mut self) {
+        self.stop_tx.send(()).unwrap();
+        if let Some(x) = self.join.take() {
+            x.join().unwrap();
+        }
+    }
+}
 
 pub struct LoggerBuilder {
     json: bool,
@@ -146,7 +165,7 @@ impl LoggerBuilder {
     /// - INFO => Green
     /// - WARN => Yellow
     /// - ERROR => Red
-    fn fmt_level(level: &Level) -> String {
+    pub fn fmt_level(level: &Level) -> String {
         format!("{: >5}", level.to_string())
             .bold()
             .color(match *level {
@@ -160,7 +179,8 @@ impl LoggerBuilder {
 
     fn default_json_writer(item: LogItem, mut writer: Box<dyn Write>) -> Result<()> {
         let v = serde_json::to_string(&item).unwrap_or_default();
-        writer.write_fmt(format_args!("{v}\n")).map_err(Into::into)
+        writer.write_fmt(format_args!("{v}\n"))?;
+        writer.flush().map_err(Into::into)
     }
 
     fn default_color_writer(item: LogItem, mut writer: Box<dyn Write>) -> Result<()> {
@@ -191,9 +211,8 @@ impl LoggerBuilder {
             }
         }
 
-        writer
-            .write_fmt(format_args!("{buf}\n"))
-            .map_err(Into::into)
+        writer.write_fmt(format_args!("{buf}\n"))?;
+        writer.flush().map_err(Into::into)
     }
 
     pub fn new() -> Self {
@@ -257,8 +276,9 @@ impl LoggerBuilder {
 
     /// Start logger.
     /// This method will spawn a new thread to print the log.
-    pub fn start(self) -> Logger {
-        let (tx, rx) = mpsc::channel();
+    pub fn start(self) -> (Logger, LoggerGuard) {
+        let (tx, mut rx) = unbounded_channel();
+        let (stop_tx, mut stop_rx) = unbounded_channel();
         tracing_subscriber::fmt()
             .with_max_level(self.level)
             .with_writer(LogSender::new(tx.clone()))
@@ -268,12 +288,8 @@ impl LoggerBuilder {
             .json()
             .init();
 
-        thread::spawn(move || {
-            let filter = self.filter;
-            let transformer = self.transformer;
-            let json_writer = self.json_writer;
-            let color_writer = self.color_writer;
-            while let Ok(v) = rx.recv() {
+        let join = thread::spawn(move || {
+            let handler = |v: Map<String, Value>| {
                 let mut item = LogItem::from_json(v);
                 let time = item.fields.remove("_time").unwrap_or_default().as_i64();
                 if self.json {
@@ -290,12 +306,12 @@ impl LoggerBuilder {
                         .into();
                 }
 
-                if let Some(filter) = &filter {
+                if let Some(filter) = &self.filter {
                     if !filter(&item) {
-                        continue;
+                        return;
                     }
                 }
-                if let Some(transformer) = &transformer {
+                if let Some(transformer) = &self.transformer {
                     item = transformer(item);
                 }
                 let writer: Box<dyn io::Write> = if item.level <= Level::WARN {
@@ -304,12 +320,33 @@ impl LoggerBuilder {
                     Box::new(stdout())
                 };
                 if self.json {
-                    let _ = json_writer(item, writer);
+                    let _ = (self.json_writer)(item, writer);
                 } else {
-                    let _ = color_writer(item, writer);
+                    let _ = (self.color_writer)(item, writer);
                 }
-            }
+            };
+            block_on(async move {
+                loop {
+                    select! {
+                        Some(v) = rx.recv() => {
+                            handler(v);
+                        },
+                        _ = stop_rx.recv() => {
+                            while let Ok(v) = rx.try_recv(){
+                                handler(v);
+                            }
+                            break;
+                        }
+                    }
+                }
+            })
         });
-        Logger { tx }
+        (
+            Logger { tx },
+            LoggerGuard {
+                stop_tx,
+                join: Some(join),
+            },
+        )
     }
 }
