@@ -1,3 +1,13 @@
+# 0.4.0
+## New
+1. `generate_response` now support custom import prefix.
+2. Feature: `all`.
+
+## Fix
+1. `actix_cloud::main` can be used as re-export.
+2. `chrono` is re-exported.
+3. Middleware error can be handled correctly.
+
 # 0.3.0
 ## Breaking changes
 1. `Logger::init` no longer consumes builder.

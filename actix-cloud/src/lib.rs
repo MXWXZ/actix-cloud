@@ -12,6 +12,7 @@ pub use anyhow::bail;
 pub use anyhow::Error;
 pub use anyhow::Result;
 pub use async_trait::async_trait;
+pub use chrono;
 #[cfg(feature = "config")]
 pub use config;
 pub use macros::main;

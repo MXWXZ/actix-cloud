@@ -1,9 +1,8 @@
 use std::{future::Future, rc::Rc};
 
 use actix_web::{
-    body::EitherBody,
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
-    HttpMessage, HttpRequest, HttpResponse,
+    HttpMessage, HttpRequest,
 };
 use futures::future::{ready, LocalBoxFuture, Ready};
 use qstring::QString;
@@ -48,7 +47,7 @@ where
     F: Fn(HttpRequest, String) -> Fut + 'static,
     Fut: Future<Output = Result<bool, actix_web::Error>>,
 {
-    type Response = ServiceResponse<EitherBody<B>>;
+    type Response = ServiceResponse<B>;
     type Error = actix_web::Error;
     type InitError = ();
     type Transform = MiddlewareService<S, F>;
@@ -124,7 +123,7 @@ where
     F: Fn(HttpRequest, String) -> Fut + 'static,
     Fut: Future<Output = Result<bool, actix_web::Error>>,
 {
-    type Response = ServiceResponse<EitherBody<B>>;
+    type Response = ServiceResponse<B>;
     type Error = actix_web::Error;
     type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -152,20 +151,12 @@ where
                         Self::check_csrf(&req, &cookie, &header, checker, true).await
                     }
                     CSRFType::Disabled => Ok(true),
-                };
-                if ret.is_err() {
-                    return Ok(req.into_response(
-                        HttpResponse::InternalServerError()
-                            .finish()
-                            .map_into_right_body(),
-                    ));
-                }
-                if ret.is_ok_and(|x| !x) {
-                    return Ok(req
-                        .into_response(HttpResponse::BadRequest().finish().map_into_right_body()));
+                }?;
+                if !ret {
+                    return Err(actix_web::error::ErrorBadRequest("CSRF check failed"));
                 }
             }
-            Ok(srv.call(req).await?.map_into_left_body())
+            srv.call(req).await
         })
     }
 }

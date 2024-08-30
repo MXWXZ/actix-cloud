@@ -66,14 +66,18 @@ pub enum BuildError {
 /// ```no_run
 /// use actix_cloud::response::generate_response;
 ///
-/// generate_response("response", "response.rs").unwrap();
+/// generate_response("", "response", "response.rs").unwrap();
 /// ```
-pub fn generate_response(input: &str, output: &str) -> anyhow::Result<()> {
+pub fn generate_response(import_prefix: &str, input: &str, output: &str) -> anyhow::Result<()> {
     use std::io::Write;
 
     let outfile = std::path::Path::new(&std::env::var("OUT_DIR")?).join(output);
     let mut output = std::fs::File::create(&outfile)?;
-    writeln!(output, "use actix_cloud::response::ResponseCodeTrait;")?;
+    writeln!(
+        output,
+        "use {}actix_cloud::response::ResponseCodeTrait;",
+        import_prefix
+    )?;
     for entry in walkdir::WalkDir::new(input) {
         let entry = entry?;
         if entry.file_type().is_file() {

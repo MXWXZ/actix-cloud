@@ -1,6 +1,6 @@
 [package]
 name = "actix-cloud"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["MXWXZ <matrixwxz@gmail.com>"]
 description = "Actix Cloud is an all-in-one web framework based on Actix Web."
@@ -17,6 +17,19 @@ categories = [
 
 [features]
 default = ["logger"]
+all = [
+    "i18n",
+    "redis",
+    "session",
+    "config-yaml",
+    "config-json",
+    "config-toml",
+    "response-json",
+    "traceid",
+    "rustls",
+    "seaorm",
+    "csrf",
+]
 serde = ["dep:serde", "dep:serde_json", "dep:serde_with"]
 memorydb = ["dep:glob"]
 redis = ["dep:redis", "memorydb"]
@@ -54,7 +67,7 @@ anyhow = "1.0.86"
 rand = "0.8.5"
 hex = "0.4.3"
 
-actix-cloud-codegen = { version = "0.2.0", path = "../actix-cloud-codegen" }
+actix-cloud-codegen = { version = "0.2.1", path = "../actix-cloud-codegen" }
 
 # serde
 serde = { version = "1.0.208", features = ["derive"], optional = true }

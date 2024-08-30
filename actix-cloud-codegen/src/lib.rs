@@ -11,7 +11,7 @@ mod i18n;
 #[proc_macro_attribute]
 pub fn main(_: TokenStream, item: TokenStream) -> TokenStream {
     let mut output: TokenStream = (quote! {
-        #[::actix_cloud::actix_web::rt::main(system = "::actix_cloud::actix_web::rt::System")]
+        #[actix_cloud::actix_web::rt::main(system = "actix_cloud::actix_web::rt::System")]
     })
     .into();
 
@@ -64,8 +64,6 @@ pub fn i18n(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// Automatically generate `created_at` and `updated_at` on create and update.
 ///
-/// Crate `chrono` will be used.
-///
 /// # Examples
 /// ```ignore
 /// pub struct Model {
@@ -83,7 +81,7 @@ pub fn entity_timestamp(_: TokenStream, input: TokenStream) -> TokenStream {
     entity.items.push(syn::parse_quote!(
         fn entity_timestamp(&self, e: &mut Self, insert: bool) {
             let tm: sea_orm::ActiveValue<i64> =
-                sea_orm::ActiveValue::set(chrono::Utc::now().timestamp_millis());
+                sea_orm::ActiveValue::set(actix_cloud::chrono::Utc::now().timestamp_millis());
             if insert {
                 e.created_at = tm.clone();
                 e.updated_at = tm.clone();

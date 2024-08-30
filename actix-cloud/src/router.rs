@@ -7,10 +7,9 @@ use std::{
 #[cfg(feature = "csrf")]
 use actix_web::HttpMessage;
 use actix_web::{
-    body::EitherBody,
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     web::ServiceConfig,
-    HttpResponse, Route,
+    Route,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -86,7 +85,7 @@ where
     S::Future: 'static,
     B: 'static + Debug,
 {
-    type Response = ServiceResponse<EitherBody<B>>;
+    type Response = ServiceResponse<B>;
     type Error = actix_web::Error;
     type InitError = ();
     type Transform = RouterGuardMiddleware<S>;
@@ -115,7 +114,7 @@ where
     S::Future: 'static,
     B: 'static + Debug,
 {
-    type Response = ServiceResponse<EitherBody<B>>;
+    type Response = ServiceResponse<B>;
     type Error = actix_web::Error;
     type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -131,21 +130,15 @@ where
                 match checker.check(&mut req).await {
                     Ok(ok) => {
                         if ok {
-                            Ok(srv.call(req).await?.map_into_left_body())
+                            srv.call(req).await
                         } else {
-                            Ok(req.into_response(
-                                HttpResponse::Forbidden().finish().map_into_right_body(),
-                            ))
+                            Err(actix_web::error::ErrorForbidden("Checker failed"))
                         }
                     }
-                    Err(_) => Ok(req.into_response(
-                        HttpResponse::InternalServerError()
-                            .finish()
-                            .map_into_right_body(),
-                    )),
+                    Err(e) => Err(actix_web::error::ErrorInternalServerError(e)),
                 }
             } else {
-                Ok(srv.call(req).await?.map_into_left_body())
+                srv.call(req).await
             }
         })
     }
