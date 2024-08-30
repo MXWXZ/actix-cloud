@@ -1,3 +1,7 @@
+# 0.4.1
+## Fix
+1. rustls provider will be set by default.
+
 # 0.4.0
 ## New
 1. `generate_response` now support custom import prefix.

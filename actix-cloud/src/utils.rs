@@ -67,6 +67,9 @@ pub fn load_rustls_config<P: AsRef<std::path::Path>>(
     cert: P,
     key: P,
 ) -> Result<rustls::ServerConfig> {
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .unwrap();
     let config = rustls::ServerConfig::builder().with_no_client_auth();
     let cert_chain =
         rustls_pemfile::certs(&mut std::io::BufReader::new(std::fs::File::open(cert)?))
