@@ -1,3 +1,7 @@
+# 0.4.2
+## Changes
+1. entity_timestamp macro need to import `chrono` manually.
+
 # 0.4.1
 ## Fix
 1. rustls provider will be set by default.

@@ -81,7 +81,7 @@ pub fn entity_timestamp(_: TokenStream, input: TokenStream) -> TokenStream {
     entity.items.push(syn::parse_quote!(
         fn entity_timestamp(&self, e: &mut Self, insert: bool) {
             let tm: sea_orm::ActiveValue<i64> =
-                sea_orm::ActiveValue::set(actix_cloud::chrono::Utc::now().timestamp_millis());
+                sea_orm::ActiveValue::set(chrono::Utc::now().timestamp_millis());
             if insert {
                 e.created_at = tm.clone();
                 e.updated_at = tm.clone();
