@@ -1,3 +1,7 @@
+# 0.4.3
+## Changes
+1. Update dependencies.
+
 # 0.4.2
 ## Changes
 1. entity_timestamp macro need to import `chrono` manually.
