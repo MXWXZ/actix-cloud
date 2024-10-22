@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-serde = { version = "1.0.210", features = ["derive"] }
-validator = { version = "0.18.1", features = ["derive", "card", "unic"] }
-serde-inline-default = "0.2.2"
+serde = { version = "1.0", features = ["derive"] }
+validator = { version = "0.18", features = ["derive", "card", "unic"] }
+serde-inline-default = "0.2"
 
 actix-cloud = { path = "../../actix-cloud", default-features = false, features = [
     "config",

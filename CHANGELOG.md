@@ -1,3 +1,7 @@
+# 0.4.4
+## Changes
+1. Dependencies do not rely on exact version.
+
 # 0.4.3
 ## Changes
 1. Update dependencies.
