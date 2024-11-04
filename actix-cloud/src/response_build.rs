@@ -27,7 +27,7 @@ pub enum BuildError {
 /// ```
 ///
 /// ```no_run
-/// use actix_cloud::response::generate_response;
+/// use actix_cloud::response_build::generate_response;
 ///
 /// generate_response("", "response", "response.rs").unwrap();
 /// ```
