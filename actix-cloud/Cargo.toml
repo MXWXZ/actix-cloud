@@ -1,6 +1,6 @@
 [package]
 name = "actix-cloud"
-version = "0.4.4"
+version = "0.4.5"
 edition = "2021"
 authors = ["MXWXZ <matrixwxz@gmail.com>"]
 description = "Actix Cloud is an all-in-one web framework based on Actix Web."
@@ -16,63 +16,111 @@ categories = [
 ]
 
 [features]
-default = ["logger"]
-all = [
+default = [
+    "utils",
+    "rustls",
+    "macros",
+    "config-yaml",
+    "logger",
     "i18n",
     "redis",
+    "request",
+    "traceid",
+    "state",
     "session",
+    "csrf",
+    "security",
+    "response-json",
+    "seaorm",
+]
+all = [
+    "utils",
+    "rustls",
+    "macros",
     "config-yaml",
     "config-json",
     "config-toml",
-    "response-json",
+    "logger",
+    "i18n",
+    "redis",
+    "request",
     "traceid",
-    "rustls",
-    "seaorm",
+    "state",
+    "session",
     "csrf",
+    "security",
+    "response-json",
+    "seaorm",
 ]
-serde = ["dep:serde", "dep:serde_json", "dep:serde_with"]
-memorydb = ["dep:glob"]
-redis = ["dep:redis", "memorydb"]
+
+utils = ["dep:rand", "anyhow", "dep:hex"]
 rustls = ["actix-web/rustls-0_23", "dep:rustls", "dep:rustls-pemfile"]
-logger = ["dep:tracing", "dep:tracing-subscriber", "dep:colored", "serde"]
-i18n = ["actix-cloud-codegen/i18n"]
-session = ["dep:actix-utils", "serde", "memorydb"]
-config = ["dep:config"]
+macros = ["dep:actix-cloud-codegen"]
 config-json = ["config", "config/json"]
 config-yaml = ["config", "config/yaml"]
 config-toml = ["config", "config/toml"]
-response = []
-response-json = ["response", "serde"]
+logger = [
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:colored",
+    "serde",
+    "anyhow",
+    "dep:futures",
+    "tokio",
+    "chrono",
+]
+i18n = ["actix-cloud-codegen/i18n"]
+redis = ["dep:redis", "memorydb"]
+request = ["actix-web", "dep:futures", "chrono"]
+traceid = ["dep:tracing-actix-web"]
+state = ["anyhow", "actix-web", "chrono", "dep:parking_lot"]
+session = ["dep:actix-utils", "serde", "memorydb", "actix-web", "dep:rand"]
+csrf = [
+    "dep:qstring",
+    "dep:enum-as-inner",
+    "actix-web",
+    "dep:futures",
+    "router",
+]
+security = ["actix-web"]
 response-build = [
-    "response",
+    "anyhow",
+    "dep:thiserror",
     "dep:walkdir",
     "dep:yaml-rust2",
     "dep:quote",
     "dep:syn",
     "dep:prettyplease",
 ]
-traceid = ["dep:tracing-actix-web"]
+response-json = ["response", "serde"]
 seaorm = ["actix-cloud-codegen/seaorm"]
-csrf = ["dep:qstring", "dep:enum-as-inner"]
+
+response = ["actix-web", "dep:futures", "anyhow"]
+router = ["actix-web", "anyhow", "async-trait", "dep:futures"]
+memorydb = ["dep:glob", "async-trait", "dep:parking_lot", "chrono", "anyhow"]
+config = ["dep:config"]
+serde = ["dep:serde", "dep:serde_json", "dep:serde_with"]
+anyhow = ["dep:anyhow"]
+async-trait = ["dep:async-trait"]
+chrono = ["dep:chrono"]
+tokio = ["dep:tokio"]
+actix-web = ["dep:actix-web"]
 
 [dependencies]
-actix-web = { version = "4", features = ["secure-cookies"] }
-parking_lot = "0.12"
-thiserror = "1.0"
-tokio = { version = "1", features = ["full"] }
-async-trait = "0.1"
-chrono = "0.4"
-futures = "0.3"
-anyhow = "1.0"
-rand = "0.8"
-hex = "0.4"
+# utils
+rand = { version = "0.8", optional = true }
+anyhow = { version = "1.0", optional = true }
+hex = { version = "0.4", optional = true }
 
-actix-cloud-codegen = { version = "0.2", path = "../actix-cloud-codegen" }
+# rustls
+rustls = { version = "0.23", optional = true }
+rustls-pemfile = { version = "2.2", optional = true }
 
-# serde
-serde = { version = "1.0", features = ["derive"], optional = true }
-serde_json = { version = "1.0", optional = true }
-serde_with = { version = "3.11", optional = true }
+# macros
+actix-cloud-codegen = { version = "0.2", path = "../actix-cloud-codegen", optional = true }
+
+# config
+config = { version = "0.14", optional = true }
 
 # logger
 tracing = { version = "0.1", optional = true }
@@ -81,6 +129,28 @@ tracing-subscriber = { version = "0.3", features = [
     "parking_lot",
 ], optional = true }
 colored = { version = "2.1", optional = true }
+futures = { version = "0.3", optional = true }
+
+# tokio
+tokio = { version = "1", features = ["full"], optional = true }
+
+# actix-web
+actix-web = { version = "4", features = ["secure-cookies"], optional = true }
+
+# memorydb
+glob = { version = "0.3", optional = true }
+parking_lot = { version = "0.12", optional = true }
+
+# chrono
+chrono = { version = "0.4", optional = true }
+
+# async-trait
+async-trait = { version = "0.1", optional = true }
+
+# serde
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+serde_with = { version = "3.11", optional = true }
 
 # redis
 redis = { version = "0.27", features = [
@@ -88,15 +158,8 @@ redis = { version = "0.27", features = [
     "connection-manager",
 ], optional = true }
 
-# rustls
-rustls = { version = "0.23", optional = true }
-rustls-pemfile = { version = "2.2", optional = true }
-
 # session
 actix-utils = { version = "3.0", optional = true }
-
-# config
-config = { version = "0.14", optional = true }
 
 # build
 walkdir = { version = "2.5", optional = true }
@@ -108,12 +171,15 @@ prettyplease = { version = "0.2", optional = true }
 # traceid
 tracing-actix-web = { version = "0.7", optional = true }
 
-# memorydb
-glob = { version = "0.3", optional = true }
-
 # csrf
 qstring = { version = "0.7", optional = true }
 enum-as-inner = { version = "0.6", optional = true }
+
+# response-build 
+thiserror = { version = "1.0", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
 
 [package.metadata.docs.rs]
 all-features = true

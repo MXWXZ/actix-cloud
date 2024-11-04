@@ -1,3 +1,7 @@
+# 0.4.5
+## Changes
+1. Make features to be more configurable to reduce compilation size.
+
 # 0.4.4
 ## Changes
 1. Dependencies do not rely on exact version.
