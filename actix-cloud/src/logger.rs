@@ -132,6 +132,7 @@ impl Logger {
 pub type WriterFn = Box<dyn Fn(LogItem, Box<dyn Write>) -> Result<()> + Send>;
 pub type FilterFn = Box<dyn Fn(&LogItem) -> bool + Send>;
 pub type TransformerFn = Box<dyn Fn(LogItem) -> LogItem + Send>;
+pub type HandlerFn = Box<dyn Fn(&Map<String, Value>) -> bool + Send>;
 
 pub struct LoggerGuard {
     stop_tx: UnboundedSender<()>,
@@ -156,6 +157,7 @@ pub struct LoggerBuilder {
     transformer: Option<TransformerFn>,
     json_writer: WriterFn,
     color_writer: WriterFn,
+    handler: Option<HandlerFn>,
 }
 
 impl LoggerBuilder {
@@ -225,6 +227,7 @@ impl LoggerBuilder {
             transformer: None,
             json_writer: Box::new(Self::default_json_writer),
             color_writer: Box::new(Self::default_color_writer),
+            handler: None,
         }
     }
 
@@ -290,6 +293,11 @@ impl LoggerBuilder {
 
         let join = thread::spawn(move || {
             let handler = |v: Map<String, Value>| {
+                if let Some(x) = &self.handler {
+                    if !x(&v) {
+                        return;
+                    }
+                }
                 let mut item = LogItem::from_json(v);
                 let time = item.fields.remove("_time").unwrap_or_default().as_i64();
                 if self.json {

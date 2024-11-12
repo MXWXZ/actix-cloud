@@ -1,3 +1,7 @@
+# 0.4.6
+## Changes
+1. Logger can use `handler` to configure custom handlers.
+
 # 0.4.5
 ## Changes
 1. Make features to be more configurable to reduce compilation size.
