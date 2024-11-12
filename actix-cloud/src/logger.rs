@@ -1,6 +1,8 @@
 use std::{
     fmt::Write as _,
+    future::Future,
     io::{self, stderr, stdout, Write},
+    pin::Pin,
     str::FromStr,
     thread::{self, JoinHandle},
 };
@@ -132,7 +134,7 @@ impl Logger {
 pub type WriterFn = Box<dyn Fn(LogItem, Box<dyn Write>) -> Result<()> + Send>;
 pub type FilterFn = Box<dyn Fn(&LogItem) -> bool + Send>;
 pub type TransformerFn = Box<dyn Fn(LogItem) -> LogItem + Send>;
-pub type HandlerFn = Box<dyn Fn(&Map<String, Value>) -> bool + Send>;
+pub type HandlerFn = Box<dyn Fn(&Map<String, Value>) -> Pin<Box<dyn Future<Output = bool>>> + Send>;
 
 pub struct LoggerGuard {
     stop_tx: UnboundedSender<()>,
@@ -263,7 +265,7 @@ impl LoggerBuilder {
 
     pub fn handler<F>(mut self, handler: F) -> Self
     where
-        F: Fn(&Map<String, Value>) -> bool + Send + 'static,
+        F: Fn(&Map<String, Value>) -> Pin<Box<dyn Future<Output = bool>>> + Send + 'static,
     {
         self.handler = Some(Box::new(handler));
         self
@@ -300,9 +302,9 @@ impl LoggerBuilder {
             .init();
 
         let join = thread::spawn(move || {
-            let handler = |v: Map<String, Value>| {
+            let handler = |v: Map<String, Value>| async {
                 if let Some(x) = &self.handler {
-                    if !x(&v) {
+                    if !x(&v).await {
                         return;
                     }
                 }
@@ -345,11 +347,11 @@ impl LoggerBuilder {
                 loop {
                     select! {
                         Some(v) = rx.recv() => {
-                            handler(v);
+                            handler(v).await;
                         },
                         _ = stop_rx.recv() => {
                             while let Ok(v) = rx.try_recv(){
-                                handler(v);
+                                handler(v).await;
                             }
                             break;
                         }

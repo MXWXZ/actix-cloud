@@ -1,3 +1,7 @@
+# 0.4.8
+## Changes
+1. `handler` function can be async.
+
 # 0.4.7
 ## Changes
 1. Logger can configure `handler` through the function.
