@@ -1,3 +1,7 @@
+# 0.4.7
+## Changes
+1. Logger can configure `handler` through the function.
+
 # 0.4.6
 ## Changes
 1. Logger can use `handler` to configure custom handlers.

@@ -261,6 +261,14 @@ impl LoggerBuilder {
         self
     }
 
+    pub fn handler<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&Map<String, Value>) -> bool + Send + 'static,
+    {
+        self.handler = Some(Box::new(handler));
+        self
+    }
+
     pub fn filter<F>(mut self, filter: F) -> Self
     where
         F: Fn(&LogItem) -> bool + Send + 'static,
