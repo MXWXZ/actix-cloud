@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use actix_web::middleware;
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum RefererPolicy {
     NoReferrer,
@@ -29,6 +30,7 @@ impl Display for RefererPolicy {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum XFrameOptions {
     Deny,
@@ -44,6 +46,7 @@ impl Display for XFrameOptions {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum XXSSProtection {
     Disable,
@@ -63,6 +66,7 @@ impl Display for XXSSProtection {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum CrossOriginOpenerPolicy {
     UnsafeNone,
@@ -80,6 +84,7 @@ impl Display for CrossOriginOpenerPolicy {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum StrictTransportSecurity {
     MaxAge(u32),
@@ -101,6 +106,7 @@ impl Display for StrictTransportSecurity {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct SecurityHeader {
     pub referer_policy: RefererPolicy,

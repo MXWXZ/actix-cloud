@@ -11,7 +11,7 @@ use crate::Result;
 use chrono::{DateTime, Local, Utc};
 use colored::{Color, Colorize as _};
 use futures::executor::block_on;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use serde_with::{serde_as, DisplayFromStr};
 use tokio::{
@@ -21,7 +21,7 @@ use tokio::{
 use tracing::Level;
 
 #[serde_as]
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct LogItem {
     pub time: Value,
     #[serde_as(as = "DisplayFromStr")]

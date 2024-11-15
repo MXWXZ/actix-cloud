@@ -1,6 +1,6 @@
 [package]
 name = "actix-cloud"
-version = "0.4.8"
+version = "0.4.9"
 edition = "2021"
 authors = ["MXWXZ <matrixwxz@gmail.com>"]
 description = "Actix Cloud is an all-in-one web framework based on Actix Web."
@@ -63,7 +63,7 @@ logger = [
     "dep:tracing",
     "dep:tracing-subscriber",
     "dep:colored",
-    "serde",
+    "serde_dep",
     "anyhow",
     "dep:futures",
     "tokio",
@@ -74,7 +74,7 @@ redis = ["dep:redis", "memorydb"]
 request = ["actix-web", "dep:futures", "chrono"]
 traceid = ["dep:tracing-actix-web"]
 state = ["anyhow", "actix-web", "chrono", "dep:parking_lot"]
-session = ["dep:actix-utils", "serde", "memorydb", "actix-web", "dep:rand"]
+session = ["dep:actix-utils", "serde_dep", "memorydb", "actix-web", "dep:rand"]
 csrf = [
     "dep:qstring",
     "dep:enum-as-inner",
@@ -92,14 +92,15 @@ response-build = [
     "dep:syn",
     "dep:prettyplease",
 ]
-response-json = ["response", "serde"]
+response-json = ["response", "serde_dep"]
 seaorm = ["actix-cloud-codegen/seaorm"]
+serde = []
 
 response = ["actix-web", "dep:futures", "anyhow"]
 router = ["actix-web", "anyhow", "async-trait", "dep:futures"]
 memorydb = ["dep:glob", "async-trait", "dep:parking_lot", "chrono", "anyhow"]
 config = ["dep:config"]
-serde = ["dep:serde", "dep:serde_json", "dep:serde_with"]
+serde_dep = ["dep:serde", "dep:serde_json", "dep:serde_with"]
 anyhow = ["dep:anyhow"]
 async-trait = ["dep:async-trait"]
 chrono = ["dep:chrono"]
@@ -142,7 +143,7 @@ glob = { version = "0.3", optional = true }
 parking_lot = { version = "0.12", optional = true }
 
 # chrono
-chrono = { version = "0.4", optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
 
 # async-trait
 async-trait = { version = "0.1", optional = true }

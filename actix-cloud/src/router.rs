@@ -56,6 +56,7 @@ pub trait Checker {
 }
 
 #[cfg(feature = "csrf")]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, enum_as_inner::EnumAsInner)]
 pub enum CSRFType {
     Header,

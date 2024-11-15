@@ -68,6 +68,7 @@ macro_rules! map {
     }};
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug)]
 pub struct Locale {
     pub locale: HashMap<String, String>,

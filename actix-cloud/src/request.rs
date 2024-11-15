@@ -7,6 +7,7 @@ use actix_web::{
 use chrono::{DateTime, Utc};
 use futures::future::{ready, LocalBoxFuture, Ready};
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone)]
 pub struct Extension {
     /// Request start time.

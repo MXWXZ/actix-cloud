@@ -1,3 +1,7 @@
+# 0.4.9
+## New
+1. New feature `serde` to add `Serialize`, `Deserialize` for supported structs.
+
 # 0.4.8
 ## Changes
 1. `handler` function can be async.
