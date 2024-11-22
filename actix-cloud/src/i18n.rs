@@ -7,7 +7,7 @@ pub use actix_cloud_codegen::i18n;
 /// ```no_run
 /// use actix_cloud::{i18n::{i18n, Locale},t};
 ///
-/// let mut locale = Locale::new(String::from("en-US")).add_locale(i18n!("locale"));
+/// let mut locale = Locale::new("en-US").add_locale(i18n!("locale"));
 ///
 /// // Get default locale's text
 /// t!(locale, "greeting");
@@ -76,10 +76,10 @@ pub struct Locale {
 }
 
 impl Locale {
-    pub fn new(default: String) -> Self {
+    pub fn new<S: Into<String>>(default: S) -> Self {
         Self {
             locale: HashMap::new(),
-            default,
+            default: default.into(),
         }
     }
 

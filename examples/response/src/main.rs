@@ -48,7 +48,7 @@ async fn main() -> io::Result<()> {
     let (logger, _guard) = LoggerBuilder::new().start();
 
     // Init locale.
-    let locale = Locale::new(String::from("en-US")).add_locale(i18n!("locale"));
+    let locale = Locale::new("en-US").add_locale(i18n!("locale"));
 
     // Init state.
     let state = GlobalState {

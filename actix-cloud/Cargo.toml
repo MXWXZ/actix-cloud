@@ -1,6 +1,6 @@
 [package]
 name = "actix-cloud"
-version = "0.4.9"
+version = "0.4.10"
 edition = "2021"
 authors = ["MXWXZ <matrixwxz@gmail.com>"]
 description = "Actix Cloud is an all-in-one web framework based on Actix Web."

@@ -65,7 +65,7 @@ We use `rust-i18n-support` from [rust-i18n](https://crates.io/crates/rust-i18n) 
 
 Load locale:
 ```
-let locale = Locale::new(String::from("en-US")).add_locale(i18n!("locale"));
+let locale = Locale::new("en-US").add_locale(i18n!("locale"));
 ```
 
 Translate:
