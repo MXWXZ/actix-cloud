@@ -1,3 +1,8 @@
+# 0.4.11
+## Changes
+1. Make clippy happy.
+2. Bump `thiserror` to 2.0.
+
 # 0.4.10
 ## Changes
 1. `Locale::new` support `Into<String>` instead of `String`.

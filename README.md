@@ -1,5 +1,9 @@
 # actix-cloud
 
+[![crates.io](https://img.shields.io/crates/v/actix-cloud?label=crates.io&style=flat-square)](https://crates.io/crates/actix-cloud)
+[![docs.rs](https://img.shields.io/docsrs/actix-cloud?style=flat-square)](https://docs.rs/actix-cloud/latest)
+![license](https://img.shields.io/github/license/mxwxz/actix-cloud?style=flat-square)
+
 Actix Cloud is an all-in-one web framework based on [Actix Web](https://crates.io/crates/actix-web).
 
 ## Features

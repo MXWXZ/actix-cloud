@@ -155,7 +155,7 @@ where
         {
             use futures::FutureExt;
             use std::str::FromStr;
-            return Box::pin(self.service.call(req).map(move |x| {
+            Box::pin(self.service.call(req).map(move |x| {
                 if let Some(header) = header.as_ref() {
                     x.map(|mut x| {
                         x.headers_mut().insert(
@@ -167,7 +167,7 @@ where
                 } else {
                     x
                 }
-            }));
+            }))
         }
     }
 }
