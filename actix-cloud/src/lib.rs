@@ -1,4 +1,6 @@
-#![doc = include_str!("../../README.md")]
+//! Actix Cloud is an all-in-one web framework based on [Actix Web](https://crates.io/crates/actix-web).
+//!
+//! Please refer to our [crate.io](https://crates.io/crates/actix-cloud) and [Github](https://github.com/MXWXZ/actix-cloud) for more documents.
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 #[cfg(feature = "macros")]
