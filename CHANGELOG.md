@@ -1,3 +1,7 @@
+# 0.4.12
+## Changes
+1. Memory database support `ttl` function.
+
 # 0.4.11
 ## Changes
 1. Make clippy happy.

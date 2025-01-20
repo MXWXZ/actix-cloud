@@ -12,6 +12,7 @@ use rand::{
 
 use crate::Result;
 
+/// Check whether iterator `iter` contains only unique values.
 pub fn is_unique<T>(iter: T) -> bool
 where
     T: IntoIterator,
@@ -21,6 +22,7 @@ where
     iter.into_iter().all(move |x| uniq.insert(x))
 }
 
+/// Check whether `t` type `T` is equal to default.
 pub fn is_default<T: Default + PartialEq>(t: &T) -> bool {
     *t == Default::default()
 }
@@ -63,6 +65,7 @@ pub fn restart() -> Result<Child> {
 }
 
 #[cfg(feature = "rustls")]
+/// Load SSL certificate and key.
 pub fn load_rustls_config<P: AsRef<std::path::Path>>(
     cert: P,
     key: P,

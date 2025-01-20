@@ -40,6 +40,17 @@ impl Data {
         Ok(())
     }
 
+    fn get_ttl(&self) -> Result<Option<u64>> {
+        if let Some(x) = self.1 {
+            Ok(Some(
+                x.checked_sub(Self::now()?)
+                    .ok_or(anyhow!("timestamp overflow"))?,
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
     fn valid(&self) -> Result<bool> {
         if let Some(x) = self.1 {
             if x > Self::now()? {
@@ -176,5 +187,20 @@ impl MemoryDB for DefaultBackend {
             }
         }
         Ok(sum)
+    }
+
+    async fn ttl(&self, key: &str) -> Result<Option<u64>> {
+        let rlock = self.data.read();
+        if let Some(v) = rlock.get(key) {
+            if v.valid()? {
+                Ok(v.get_ttl()?)
+            } else {
+                drop(rlock);
+                self.data.write().remove(key);
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
     }
 }

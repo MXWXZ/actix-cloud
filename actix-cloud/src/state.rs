@@ -33,8 +33,11 @@ impl GlobalState {
 pub struct ServerHandle {
     inner: Mutex<Option<dev::ServerHandle>>,
 
+    /// Whether server is running (never received stop signals).
     pub running: RwLock<bool>,
+    /// Server start timestamp.
     pub start_time: RwLock<DateTime<Utc>>,
+    /// Server stop timestamp.
     pub stop_time: RwLock<Option<DateTime<Utc>>>,
 }
 

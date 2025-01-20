@@ -16,6 +16,7 @@ pub trait MemoryDB: Send + Sync {
     async fn flush(&self) -> Result<()>;
     async fn keys(&self, key: &str) -> Result<Vec<String>>;
     async fn dels(&self, keys: &[String]) -> Result<u64>;
+    async fn ttl(&self, key: &str) -> Result<Option<u64>>;
 }
 
 #[cfg(test)]
@@ -81,12 +82,15 @@ mod tests {
         let _ = r.del(key).await;
 
         r.set(key, value).await.unwrap();
+        assert_eq!(r.ttl(key).await.unwrap(), None);
         assert_eq!(r.get_del(key).await.unwrap().unwrap(), value);
         assert_eq!(r.get(key).await.unwrap(), None);
 
         r.set_ex(key, value, &Duration::from_secs(2)).await.unwrap();
         assert_eq!(r.get(key).await.unwrap().unwrap(), value);
+        assert_eq!(r.ttl(key).await.unwrap(), Some(2));
         sleep(Duration::from_secs(1)).await;
+        assert_eq!(r.ttl(key).await.unwrap(), Some(1));
         assert_eq!(
             r.get_ex(key, &Duration::from_secs(2))
                 .await
@@ -94,9 +98,12 @@ mod tests {
                 .unwrap(),
             value
         );
+        assert_eq!(r.ttl(key).await.unwrap(), Some(2));
         sleep(Duration::from_secs(1)).await;
+        assert_eq!(r.ttl(key).await.unwrap(), Some(1));
         assert_eq!(r.get(key).await.unwrap().unwrap(), value);
         sleep(Duration::from_secs(2)).await;
+        assert_eq!(r.ttl(key).await.unwrap(), None);
         assert_eq!(r.get(key).await.unwrap(), None);
     }
 

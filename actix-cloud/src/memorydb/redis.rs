@@ -84,4 +84,13 @@ impl MemoryDB for RedisBackend {
         let res: Vec<u64> = p.query_async(&mut self.client.clone()).await?;
         Ok(res.into_iter().sum())
     }
+
+    async fn ttl(&self, key: &str) -> Result<Option<u64>> {
+        let ret: i64 = self.client.clone().ttl(key).await?;
+        if ret <= 0 {
+            Ok(None)
+        } else {
+            Ok(Some(ret as u64))
+        }
+    }
 }
