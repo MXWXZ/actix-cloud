@@ -10,23 +10,23 @@ Actix Cloud is an all-in-one web framework based on [Actix Web](https://crates.i
 Actix Cloud is highly configurable. You can only enable needed features, implement your own feature backend or even use other libraries.
 
 - [logger](#logger) (Default: Enable)
-- [i18n](#i18n) (Default: Disable)
+- [i18n](#i18n) (Default: Enable)
 - [security](#security) (Embedded)
-- memorydb (Default: Disable)
+- memorydb
   - [default](#memorydb-default) (Embedded)
   - [redis](#memorydb-redis) (Default: Disable)
 - [auth](#auth) (Embedded)
-- [session](#session) (Default: Disable)
-- [config](#config) (Default: Disable)
-  - config-json
-  - config-yaml
-  - config-toml
+- [session](#session) (Default: Enable)
+- [config](#config)
+  - config-json (Default: Disable)
+  - config-yaml (Default: Enable)
+  - config-toml (Default: Disable)
 - [request](#request) (Embedded)
-- [response](#response) (Default: Disable)
-  - response-json
-- [traceid](#traceid) (Default: Disable)
+- [response](#response) 
+  - response-json (Default: Enable)
+- [traceid](#traceid) (Default: Enable)
 - [seaorm](#seaorm) (Default: Disable)
-- [csrf](#csrf) (Default: Disable)
+- [csrf](#csrf) (Default: Enable)
 
 ## Guide
 
