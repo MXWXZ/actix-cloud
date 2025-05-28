@@ -1,3 +1,8 @@
+# 0.4.13
+## Changes
+1. Default feature change.
+2. Dependency update.
+
 # 0.4.12
 ## Changes
 1. Memory database support `ttl` function.

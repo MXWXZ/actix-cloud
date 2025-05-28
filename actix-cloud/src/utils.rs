@@ -6,8 +6,8 @@ use std::{
 };
 
 use rand::{
-    distributions::{Alphanumeric, Uniform},
-    thread_rng, Rng,
+    distr::{Alphanumeric, Uniform},
+    rng, Rng,
 };
 
 use crate::Result;
@@ -30,7 +30,7 @@ pub fn is_default<T: Default + PartialEq>(t: &T) -> bool {
 /// Get `n` bytes random string.
 /// `[a-zA-Z0-9]+`
 pub fn rand_string(n: usize) -> String {
-    thread_rng()
+    rng()
         .sample_iter(&Alphanumeric)
         .take(n)
         .map(char::from)
@@ -40,17 +40,16 @@ pub fn rand_string(n: usize) -> String {
 /// Get `n` bytes random hex string.
 /// `[a-f0-9]+`
 pub fn rand_string_hex(n: usize) -> String {
-    let mut rng = thread_rng();
-    let bytes: Vec<u8> = (0..n / 2).map(|_| rng.gen()).collect();
+    let mut rng = rng();
+    let bytes: Vec<u8> = (0..n / 2).map(|_| rng.random()).collect();
     hex::encode(bytes)
 }
 
 /// Get `n` bytes random string (all printable ascii).
 pub fn rand_string_all(n: usize) -> String {
-    thread_rng()
-        .sample_iter(Uniform::new(char::from(33), char::from(126)))
+    rng()
+        .sample_iter(Uniform::new(char::from(33), char::from(126)).unwrap())
         .take(n)
-        .map(char::from)
         .collect()
 }
 

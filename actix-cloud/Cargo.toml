@@ -1,6 +1,6 @@
 [package]
 name = "actix-cloud"
-version = "0.4.12"
+version = "0.4.13"
 edition = "2021"
 authors = ["MXWXZ <matrixwxz@gmail.com>"]
 description = "Actix Cloud is an all-in-one web framework based on Actix Web."
@@ -23,7 +23,6 @@ default = [
     "config-yaml",
     "logger",
     "i18n",
-    "redis",
     "request",
     "traceid",
     "state",
@@ -31,7 +30,6 @@ default = [
     "csrf",
     "security",
     "response-json",
-    "seaorm",
 ]
 all = [
     "utils",
@@ -63,7 +61,7 @@ logger = [
     "dep:tracing",
     "dep:tracing-subscriber",
     "dep:colored",
-    "serde_dep",
+    "serde",
     "anyhow",
     "dep:futures",
     "tokio",
@@ -74,7 +72,7 @@ redis = ["dep:redis", "memorydb"]
 request = ["actix-web", "dep:futures", "chrono"]
 traceid = ["dep:tracing-actix-web"]
 state = ["anyhow", "actix-web", "chrono", "dep:parking_lot"]
-session = ["dep:actix-utils", "serde_dep", "memorydb", "actix-web", "dep:rand"]
+session = ["dep:actix-utils", "serde", "memorydb", "actix-web", "dep:rand"]
 csrf = [
     "dep:qstring",
     "dep:enum-as-inner",
@@ -92,15 +90,14 @@ response-build = [
     "dep:syn",
     "dep:prettyplease",
 ]
-response-json = ["response", "serde_dep"]
+response-json = ["response", "serde"]
 seaorm = ["actix-cloud-codegen/seaorm"]
-serde = []
 
 response = ["actix-web", "dep:futures", "anyhow"]
 router = ["actix-web", "anyhow", "async-trait", "dep:futures"]
 memorydb = ["dep:glob", "async-trait", "dep:parking_lot", "chrono", "anyhow"]
 config = ["dep:config"]
-serde_dep = ["dep:serde", "dep:serde_json", "dep:serde_with"]
+serde = ["dep:serde", "dep:serde_json", "dep:serde_with"]
 anyhow = ["dep:anyhow"]
 async-trait = ["dep:async-trait"]
 chrono = ["dep:chrono"]
@@ -109,7 +106,7 @@ actix-web = ["dep:actix-web"]
 
 [dependencies]
 # utils
-rand = { version = "0.8", optional = true }
+rand = { version = "0.9", optional = true }
 anyhow = { version = "1.0", optional = true }
 hex = { version = "0.4", optional = true }
 
@@ -129,7 +126,7 @@ tracing-subscriber = { version = "0.3", features = [
     "json",
     "parking_lot",
 ], optional = true }
-colored = { version = "2.1", optional = true }
+colored = { version = "3.0", optional = true }
 futures = { version = "0.3", optional = true }
 
 # tokio
@@ -151,10 +148,10 @@ async-trait = { version = "0.1", optional = true }
 # serde
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
-serde_with = { version = "3.11", optional = true }
+serde_with = { version = "3.12", optional = true }
 
 # redis
-redis = { version = "0.27", features = [
+redis = { version = "0.31", features = [
     "tokio-rustls-comp",
     "connection-manager",
 ], optional = true }
@@ -164,7 +161,7 @@ actix-utils = { version = "3.0", optional = true }
 
 # build
 walkdir = { version = "2.5", optional = true }
-yaml-rust2 = { version = "0.9", optional = true }
+yaml-rust2 = { version = "0.10", optional = true }
 quote = { version = "1.0", optional = true }
 syn = { version = "2.0", optional = true }
 prettyplease = { version = "0.2", optional = true }
