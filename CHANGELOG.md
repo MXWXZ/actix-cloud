@@ -1,3 +1,7 @@
+# 0.4.14
+## New
+1. Default memory database now support basic capacity and key eviction.
+
 # 0.4.13
 ## Changes
 1. Default feature change.

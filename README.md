@@ -107,11 +107,17 @@ Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
 ### memorydb-default
 Actix Cloud has a default memory database backend used for sessions. You can also use your own backend if you implement `actix_cloud::memorydb::MemoryDB`.
 
-**Note: the default backend does not have memory limitation, DDoS is possible if gateway rate limiting is not implemented**
+```
+DefaultBackend::new(None)   // No resource limitation, DDoS is possible!
+DefaultBackend::new(Some(100000000))  // Maximum 100000000 entries.
+```
 
-```
-DefaultBackend::new()
-```
+When the database is full, key eviction policy is:
+- Evict 10% keys at a time.
+- Only keys having TTL attribute are evicted, sorting by TTL from shortest to longest.
+- If no keys are evicted, an error will be returned.
+
+Note that the internal implementation uses lazy deletion for performance.
 
 ### memorydb-redis
 Redis can be used as another backend for memory database.

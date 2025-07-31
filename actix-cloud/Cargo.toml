@@ -1,6 +1,6 @@
 [package]
 name = "actix-cloud"
-version = "0.4.13"
+version = "0.4.14"
 edition = "2021"
 authors = ["MXWXZ <matrixwxz@gmail.com>"]
 description = "Actix Cloud is an all-in-one web framework based on Actix Web."
@@ -95,7 +95,14 @@ seaorm = ["actix-cloud-codegen/seaorm"]
 
 response = ["actix-web", "dep:futures", "anyhow"]
 router = ["actix-web", "anyhow", "async-trait", "dep:futures"]
-memorydb = ["dep:glob", "async-trait", "dep:parking_lot", "chrono", "anyhow"]
+memorydb = [
+    "dep:glob",
+    "async-trait",
+    "dep:parking_lot",
+    "chrono",
+    "anyhow",
+    "dep:priority-queue",
+]
 config = ["dep:config"]
 serde = ["dep:serde", "dep:serde_json", "dep:serde_with"]
 anyhow = ["dep:anyhow"]
@@ -138,6 +145,7 @@ actix-web = { version = "4", features = ["secure-cookies"], optional = true }
 # memorydb
 glob = { version = "0.3", optional = true }
 parking_lot = { version = "0.12", optional = true }
+priority-queue = { version = "2.5", optional = true }
 
 # chrono
 chrono = { version = "0.4", features = ["serde"], optional = true }
@@ -148,10 +156,10 @@ async-trait = { version = "0.1", optional = true }
 # serde
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
-serde_with = { version = "3.12", optional = true }
+serde_with = { version = "3.14", optional = true }
 
 # redis
-redis = { version = "0.31", features = [
+redis = { version = "0.32", features = [
     "tokio-rustls-comp",
     "connection-manager",
 ], optional = true }

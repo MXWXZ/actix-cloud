@@ -85,12 +85,12 @@ impl MemoryDB for RedisBackend {
         Ok(res.into_iter().sum())
     }
 
-    async fn ttl(&self, key: &str) -> Result<Option<u64>> {
+    async fn ttl(&self, key: &str) -> Result<Option<i64>> {
         let ret: i64 = self.client.clone().ttl(key).await?;
         if ret <= 0 {
             Ok(None)
         } else {
-            Ok(Some(ret as u64))
+            Ok(Some(ret))
         }
     }
 }

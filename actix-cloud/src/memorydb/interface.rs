@@ -16,7 +16,7 @@ pub trait MemoryDB: Send + Sync {
     async fn flush(&self) -> Result<()>;
     async fn keys(&self, key: &str) -> Result<Vec<String>>;
     async fn dels(&self, keys: &[String]) -> Result<u64>;
-    async fn ttl(&self, key: &str) -> Result<Option<u64>>;
+    async fn ttl(&self, key: &str) -> Result<Option<i64>>;
 }
 
 #[cfg(test)]
@@ -35,7 +35,7 @@ mod tests {
     }
 
     fn setup_default() -> impl MemoryDB {
-        DefaultBackend::new()
+        DefaultBackend::new(None)
     }
 
     #[tokio::test]
@@ -170,5 +170,63 @@ mod tests {
             2
         );
         assert_eq!(r.keys("_actix_cl?ud_bkey*").await.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_default_capacity() {
+        let key1 = "_actix_cloud_ckey1";
+        let key2 = "_actix_cloud_ckey2";
+        let key3 = "_actix_cloud_ckey3";
+        let value = "value";
+
+        let r = DefaultBackend::new(Some(2));
+        let _ = r.del(key1).await;
+        let _ = r.del(key2).await;
+        let _ = r.del(key3).await;
+
+        assert_eq!(r.set(key1, value).await.is_ok(), true);
+        assert_eq!(r.set(key2, value).await.is_ok(), true);
+        assert_eq!(r.set(key3, value).await.is_ok(), false);
+        assert_eq!(r.set(key1, value).await.is_ok(), true);
+        assert_eq!(r.set(key2, value).await.is_ok(), true);
+
+        assert_eq!(
+            r.set_ex(key2, value, &Duration::from_secs(1)).await.is_ok(),
+            true
+        );
+        sleep(Duration::from_secs(2)).await;
+        assert_eq!(r.set(key3, value).await.is_ok(), true);
+        assert_eq!(r.get(key1).await.unwrap().unwrap(), value);
+        assert_eq!(r.get(key2).await.unwrap(), None);
+
+        assert_eq!(
+            r.set_ex(key3, value, &Duration::from_secs(3)).await.is_ok(),
+            true
+        );
+        sleep(Duration::from_secs(1)).await;
+        assert_eq!(r.set(key2, value).await.is_ok(), true);
+        assert_eq!(r.get(key1).await.unwrap().unwrap(), value);
+        assert_eq!(r.get(key3).await.unwrap(), None);
+
+        assert_eq!(r.del(key1).await.unwrap(), true);
+        assert_eq!(r.del(key2).await.unwrap(), true);
+        assert_eq!(
+            r.set_ex(key1, value, &Duration::from_secs(3)).await.is_ok(),
+            true
+        );
+        assert_eq!(
+            r.set_ex(key2, value, &Duration::from_secs(2)).await.is_ok(),
+            true
+        );
+        assert_eq!(
+            r.set_ex(key3, value, &Duration::from_secs(2)).await.is_ok(),
+            true
+        );
+        assert_eq!(r.get(key1).await.unwrap().unwrap(), value);
+        assert_eq!(r.get(key2).await.unwrap(), None);
+        assert_eq!(r.get(key3).await.unwrap().unwrap(), value);
+
+        assert_eq!(r.del(key1).await.unwrap(), true);
+        assert_eq!(r.del(key3).await.unwrap(), true);
     }
 }
