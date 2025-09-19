@@ -2,7 +2,7 @@ use std::fmt::{self, Display};
 
 use actix_web::{
     http::{
-        header::{ContentDisposition, DispositionParam, DispositionType},
+        header::{self, ContentDisposition, DispositionParam, DispositionType},
         StatusCode,
     },
     HttpResponse, HttpResponseBuilder,
@@ -51,7 +51,7 @@ pub struct Response<T> {
     pub code: i64,
     pub message: String,
     pub data: Option<T>,
-    pub builder: Option<ResponseBuilderFn>,
+    pub builder: Vec<ResponseBuilderFn>,
     #[cfg(feature = "i18n")]
     pub translate: bool,
 }
@@ -66,7 +66,7 @@ impl<T> Response<T> {
             code: r.code(),
             message: r.message().to_owned(),
             data: None,
-            builder: None,
+            builder: Vec::new(),
             #[cfg(feature = "i18n")]
             translate: true,
         }
@@ -78,7 +78,7 @@ impl<T> Response<T> {
             code: 0,
             message: String::new(),
             data: None,
-            builder: None,
+            builder: Vec::new(),
             #[cfg(feature = "i18n")]
             translate: false,
         }
@@ -88,15 +88,26 @@ impl<T> Response<T> {
         Self::new_code(400).message(s)
     }
 
+    pub fn forbidden() -> Self {
+        Self::new_code(403)
+    }
+
     pub fn not_found() -> Self {
         Self::new_code(404)
+    }
+
+    pub fn redirect<S: Into<String>>(code: u16, s: S) -> Self {
+        let s: String = s.into();
+        Self::new_code(code).builder(move |r| {
+            r.insert_header((header::LOCATION, s.clone()));
+        })
     }
 
     pub fn builder<F>(mut self, f: F) -> Self
     where
         F: Fn(&mut HttpResponseBuilder) + 'static,
     {
-        self.builder = Some(Box::new(f));
+        self.builder.push(Box::new(f));
         self
     }
 
@@ -190,15 +201,17 @@ impl actix_web::Responder for JsonResponse {
             let mut rsp =
                 HttpResponse::build(actix_web::http::StatusCode::from_u16(self.http_code).unwrap());
             rsp.content_type(actix_web::http::header::ContentType::json());
-            if let Some(builder) = self.builder {
+            for builder in self.builder {
                 builder(&mut rsp);
             }
             rsp.message_body(body).unwrap().map_into_left_body()
         } else {
-            HttpResponse::build(actix_web::http::StatusCode::from_u16(self.http_code).unwrap())
-                .message_body(self.message)
-                .unwrap()
-                .map_into_left_body()
+            let mut rsp =
+                HttpResponse::build(actix_web::http::StatusCode::from_u16(self.http_code).unwrap());
+            for builder in self.builder {
+                builder(&mut rsp);
+            }
+            rsp.message_body(self.message).unwrap().map_into_left_body()
         }
     }
 }

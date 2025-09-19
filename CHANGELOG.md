@@ -1,3 +1,8 @@
+# 0.4.15
+## New
+1. `Response` allows for multiple `builder`.
+2. `Response` add several convenient methods.
+
 # 0.4.14
 ## New
 1. Default memory database now support basic capacity and key eviction.
