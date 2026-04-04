@@ -1,3 +1,7 @@
+# 0.5.1
+## Changes
+1. Revert 0.5.0 `set_default_hsts` changes.
+
 # 0.5.0
 ## Breaking changes
 1. `set_default_hsts` is removed, now is default.
