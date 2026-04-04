@@ -125,19 +125,12 @@ impl Default for SecurityHeader {
             x_xss_protection: XXSSProtection::EnableBlock,
             cross_origin_opener_policy: CrossOriginOpenerPolicy::SameOrigin,
             content_security_policy: String::from("default-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"),
-            strict_transport_security: None,
+            strict_transport_security: Some(StrictTransportSecurity::Preload(31536000)),
         }
     }
 }
 
 impl SecurityHeader {
-    /// Set default HSTS to 1 year, includeSubDomains and preload.
-    ///
-    /// `max-age=31536000; includeSubDomains; preload`
-    pub fn set_default_hsts(&mut self) {
-        self.strict_transport_security = Some(StrictTransportSecurity::Preload(31536000));
-    }
-
     pub fn build(self) -> middleware::DefaultHeaders {
         let mut ret = middleware::DefaultHeaders::new()
             .add(("X-Content-Type-Options", "nosniff"))

@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, fmt, future::Future, pin::Pin, rc::Rc, sync::Arc};
+use std::{borrow::Cow, fmt, future::Future, pin::Pin, rc::Rc, sync::Arc};
 
 use actix_utils::future::{ready, Ready};
 use actix_web::{
@@ -8,6 +8,7 @@ use actix_web::{
     http::header::{HeaderValue, SET_COOKIE},
     HttpResponse,
 };
+use serde_json::{Map, Value};
 
 use super::{
     config::{
@@ -31,7 +32,8 @@ use crate::{memorydb::MemoryDB, Result};
 /// Use [`SessionMiddleware::new`] to initialize the session framework using the default parameters.
 /// To create a new instance of [`SessionMiddleware`] you need to provide:
 ///
-/// - an instance of the session storage backend you wish to use (i.e. an implementation of SessionStore);
+/// - an instance of the session storage backend you wish to use (i.e. an implementation of
+///   [`SessionStore`]);
 /// - a secret key, to sign or encrypt the content of client-side session cookie.
 ///
 /// # How did we choose defaults?
@@ -53,7 +55,8 @@ impl SessionMiddleware {
     /// parameters.
     ///
     /// To create a new instance of [`SessionMiddleware`] you need to provide:
-    /// - an instance of the session storage backend you wish to use (i.e. an implementation of SessionStore);
+    /// - an instance of the session storage backend you wish to use (i.e. an implementation of
+    ///   [`SessionStore`]);
     /// - a secret key, to sign or encrypt the content of client-side session cookie.
     pub fn new(client: Arc<dyn MemoryDB>, key: Key) -> Self {
         Self::builder(client, key).build()
@@ -62,7 +65,8 @@ impl SessionMiddleware {
     /// A fluent API to configure [`SessionMiddleware`].
     ///
     /// It takes as input the two required inputs to create a new instance of [`SessionMiddleware`]:
-    /// - an instance of the session storage backend you wish to use (i.e. an implementation of SessionStore);
+    /// - an instance of the session storage backend you wish to use (i.e. an implementation of
+    ///   [`SessionStore`]);
     /// - a secret key, to sign or encrypt the content of client-side session cookie.
     pub fn builder(client: Arc<dyn MemoryDB>, key: Key) -> SessionMiddlewareBuilder {
         SessionMiddlewareBuilder::new(client, config::default_configuration(key))
@@ -151,7 +155,7 @@ where
             let mut ttl = configuration.session.state_ttl;
             let mut cookie = Cow::Borrowed(&configuration.cookie);
             if let Some(x) = session_state.get("_ttl") {
-                if let Ok(x) = x.parse() {
+                if let Some(x) = x.as_i64() {
                     ttl = Duration::seconds(x);
                     let mut tmp = cookie.into_owned();
                     tmp.max_age = Some(ttl);
@@ -160,7 +164,7 @@ where
             }
             let id = session_state
                 .get("_id")
-                .map(|x| x.trim_matches('"').to_owned());
+                .map(|x| x.to_string().trim_matches('"').to_owned());
 
             match session_key {
                 None => {
@@ -268,7 +272,7 @@ fn extract_session_key(req: &ServiceRequest, config: &CookieConfiguration) -> Op
 async fn load_session_state(
     session_key: Option<SessionKey>,
     storage_backend: &SessionStore,
-) -> Result<(Option<SessionKey>, HashMap<String, String>), actix_web::Error> {
+) -> Result<(Option<SessionKey>, Map<String, Value>), actix_web::Error> {
     if let Some(session_key) = session_key {
         match storage_backend.load(&session_key).await {
             Ok(state) => {
@@ -281,14 +285,14 @@ async fn load_session_state(
                     // instead of the `update` workflow if the session state is modified during the
                     // lifecycle of the current request.
 
-                    Ok((None, HashMap::new()))
+                    Ok((None, Map::new()))
                 }
             }
 
             Err(err) => Err(e500(err)),
         }
     } else {
-        Ok((None, HashMap::new()))
+        Ok((None, Map::new()))
     }
 }
 

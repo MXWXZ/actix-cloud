@@ -1,6 +1,6 @@
 [package]
 name = "actix-cloud"
-version = "0.4.15"
+version = "0.5.0"
 edition = "2021"
 authors = ["MXWXZ <matrixwxz@gmail.com>"]
 description = "Actix Cloud is an all-in-one web framework based on Actix Web."
@@ -113,7 +113,7 @@ actix-web = ["dep:actix-web"]
 
 [dependencies]
 # utils
-rand = { version = "0.9", optional = true }
+rand = { version = "0.10", optional = true }
 anyhow = { version = "1.0", optional = true }
 hex = { version = "0.4", optional = true }
 
@@ -133,7 +133,7 @@ tracing-subscriber = { version = "0.3", features = [
     "json",
     "parking_lot",
 ], optional = true }
-colored = { version = "3.0", optional = true }
+colored = { version = "3.1", optional = true }
 futures = { version = "0.3", optional = true }
 
 # tokio
@@ -145,7 +145,7 @@ actix-web = { version = "4", features = ["secure-cookies"], optional = true }
 # memorydb
 glob = { version = "0.3", optional = true }
 parking_lot = { version = "0.12", optional = true }
-priority-queue = { version = "2.6", optional = true }
+priority-queue = { version = "2.7", optional = true }
 
 # chrono
 chrono = { version = "0.4", features = ["serde"], optional = true }
@@ -156,10 +156,10 @@ async-trait = { version = "0.1", optional = true }
 # serde
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
-serde_with = { version = "3.14", optional = true }
+serde_with = { version = "3.18", optional = true }
 
 # redis
-redis = { version = "0.32", features = [
+redis = { version = "1.1", features = [
     "tokio-rustls-comp",
     "connection-manager",
 ], optional = true }
@@ -169,7 +169,7 @@ actix-utils = { version = "3.0", optional = true }
 
 # build
 walkdir = { version = "2.5", optional = true }
-yaml-rust2 = { version = "0.10", optional = true }
+yaml-rust2 = { version = "0.11", optional = true }
 quote = { version = "1.0", optional = true }
 syn = { version = "2.0", optional = true }
 prettyplease = { version = "0.2", optional = true }
@@ -179,7 +179,7 @@ tracing-actix-web = { version = "0.7", optional = true }
 
 # csrf
 qstring = { version = "0.7", optional = true }
-enum-as-inner = { version = "0.6", optional = true }
+enum-as-inner = { version = "0.7", optional = true }
 
 # response-build 
 thiserror = { version = "2.0", optional = true }

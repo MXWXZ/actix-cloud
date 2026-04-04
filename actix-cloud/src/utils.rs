@@ -7,7 +7,7 @@ use std::{
 
 use rand::{
     distr::{Alphanumeric, Uniform},
-    rng, Rng,
+    rng, RngExt as _,
 };
 
 use crate::Result;

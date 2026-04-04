@@ -154,9 +154,9 @@ pub struct LoggerGuard {
 
 impl Drop for LoggerGuard {
     fn drop(&mut self) {
-        self.stop_tx.send(()).unwrap();
+        let _ = self.stop_tx.send(());
         if let Some(x) = self.join.take() {
-            x.join().unwrap();
+            let _ = x.join();
         }
     }
 }
@@ -171,6 +171,12 @@ pub struct LoggerBuilder {
     json_writer: WriterFn,
     color_writer: WriterFn,
     handler: Option<HandlerFn>,
+}
+
+impl Default for LoggerBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LoggerBuilder {

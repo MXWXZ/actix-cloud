@@ -107,6 +107,8 @@ Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
 ### memorydb-default
 Actix Cloud has a default memory database backend used for sessions. You can also use your own backend if you implement `actix_cloud::memorydb::MemoryDB`.
 
+**The default memorydb is only for demo purpose. The performance is not guaranteed.**
+
 ```
 DefaultBackend::new(None)   // No resource limitation, DDoS is possible!
 DefaultBackend::new(Some(100000000))  // Maximum 100000000 entries.

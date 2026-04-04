@@ -82,7 +82,8 @@ where
         let mut ret: Vec<&str> = req
             .headers()
             .get_all(name)
-            .map(|x| x.to_str().unwrap())
+            .map(|x| x.to_str().unwrap_or_default())
+            .filter(|x| !x.is_empty())
             .collect();
         if ret.len() != 1 {
             return None;

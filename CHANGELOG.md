@@ -1,3 +1,14 @@
+# 0.5.0
+## Breaking changes
+1. `set_default_hsts` is removed, now is default.
+
+## New
+1. Add `default` for `LoggerBuilder` and `Middleware`.
+
+## Changes
+1. Minor session change according to `actix-session`.
+2. Fix several unexpected unwrap.
+
 # 0.4.15
 ## New
 1. `Response` allows for multiple `builder`.

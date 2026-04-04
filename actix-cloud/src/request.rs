@@ -34,6 +34,12 @@ pub struct Middleware {
     lang: LangFunc,
 }
 
+impl Default for Middleware {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Middleware {
     fn default_real_ip(req: &ServiceRequest) -> SocketAddr {
         req.peer_addr().unwrap()

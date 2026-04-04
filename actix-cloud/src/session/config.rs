@@ -214,7 +214,7 @@ impl SessionMiddlewareBuilder {
     /// # Default
     /// By default, the cookie content is encrypted. Encrypted was chosen instead of signed as
     /// default because it reduces the chances of sensitive information being exposed in the session
-    /// key by accident, regardless of SessionStore implementation you chose to use.
+    /// key by accident, regardless of [`SessionStore`] implementation you chose to use.
     ///
     /// For example, if you are using cookie-based storage, you definitely want the cookie content
     /// to be encrypted—the whole session state is embedded in the cookie! If you are using
@@ -236,7 +236,7 @@ impl SessionMiddlewareBuilder {
         self
     }
 
-    /// Finalise the builder and return a [`SessionMiddleware`] instance.
+    /// Finalize the builder and return a [`SessionMiddleware`] instance.
     #[must_use]
     pub fn build(self) -> SessionMiddleware {
         SessionMiddleware::from_parts(self.storage_backend, self.configuration)

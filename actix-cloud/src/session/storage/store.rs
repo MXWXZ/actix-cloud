@@ -1,12 +1,13 @@
 use core::time;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use actix_web::cookie::time::Duration;
+use serde_json::{Map, Value};
 
 use super::{utils::generate_session_key, SessionKey};
 use crate::{memorydb::MemoryDB, Result};
 
-pub(crate) type SessionState = HashMap<String, String>;
+pub(crate) type SessionState = Map<String, Value>;
 
 #[derive(Clone)]
 pub struct SessionStore {
