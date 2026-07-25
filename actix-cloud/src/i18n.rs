@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 pub use actix_cloud_codegen::i18n;
 
@@ -60,7 +60,7 @@ macro_rules! t {
 #[macro_export]
 macro_rules! map {
     {$($key:expr => $value:expr),+} => {{
-        let mut m = std::collections::HashMap::new();
+        let mut m = std::collections::BTreeMap::new();
         $(
             m.insert($key, $value);
         )+
@@ -71,20 +71,20 @@ macro_rules! map {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug)]
 pub struct Locale {
-    pub locale: HashMap<String, String>,
+    pub locale: BTreeMap<String, String>,
     pub default: String,
 }
 
 impl Locale {
     pub fn new<S: Into<String>>(default: S) -> Self {
         Self {
-            locale: HashMap::new(),
+            locale: BTreeMap::new(),
             default: default.into(),
         }
     }
 
     /// Add new locale items.
-    pub fn add_locale<S: Into<String>>(mut self, l: HashMap<S, S>) -> Self {
+    pub fn add_locale<S: Into<String>>(mut self, l: BTreeMap<S, S>) -> Self {
         self.locale
             .extend(l.into_iter().map(|(a, b)| (a.into(), b.into())));
         self

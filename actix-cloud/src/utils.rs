@@ -41,14 +41,16 @@ pub fn rand_string(n: usize) -> String {
 /// `[a-f0-9]+`
 pub fn rand_string_hex(n: usize) -> String {
     let mut rng = rng();
-    let bytes: Vec<u8> = (0..n / 2).map(|_| rng.random()).collect();
-    hex::encode(bytes)
+    let bytes: Vec<u8> = (0..n.div_ceil(2)).map(|_| rng.random()).collect();
+    let mut s = hex::encode(bytes);
+    s.truncate(n);
+    s
 }
 
 /// Get `n` bytes random string (all printable ascii).
 pub fn rand_string_all(n: usize) -> String {
     rng()
-        .sample_iter(Uniform::new(char::from(33), char::from(126)).unwrap())
+        .sample_iter(Uniform::new(char::from(33), char::from(127)).unwrap())
         .take(n)
         .collect()
 }
@@ -57,7 +59,7 @@ pub fn rand_string_all(n: usize) -> String {
 ///
 /// Inherit the environment/io/working directory of current process.
 pub fn restart() -> Result<Child> {
-    Command::new(env::current_exe().unwrap())
+    Command::new(env::current_exe()?)
         .args(env::args().skip(1))
         .spawn()
         .map_err(Into::into)
@@ -69,9 +71,7 @@ pub fn load_rustls_config<P: AsRef<std::path::Path>>(
     cert: P,
     key: P,
 ) -> Result<rustls::ServerConfig> {
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .unwrap();
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let config = rustls::ServerConfig::builder().with_no_client_auth();
     let cert_chain =
         rustls_pemfile::certs(&mut std::io::BufReader::new(std::fs::File::open(cert)?))
@@ -88,4 +88,59 @@ pub fn load_rustls_config<P: AsRef<std::path::Path>>(
     config
         .with_single_cert(cert_chain, private_key)
         .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_unique() {
+        assert!(is_unique(vec![1, 2, 3]));
+        assert!(is_unique([1, 2, 3]));
+        assert!(is_unique(vec![1]));
+        assert!(is_unique(Vec::<i32>::new()));
+        assert!(!is_unique(vec![1, 2, 2]));
+        assert!(!is_unique([1, 1]));
+        assert!(is_unique("abc".chars()));
+        assert!(!is_unique("aba".chars()));
+        assert!(is_unique("".chars()));
+    }
+
+    #[test]
+    fn test_is_default() {
+        assert!(is_default(&0_u8));
+        assert!(is_default(&0_i64));
+        assert!(!is_default(&1_i64));
+        assert!(is_default(&String::new()));
+        assert!(!is_default(&"a".to_string()));
+        assert!(is_default(&Vec::<i32>::new()));
+        assert!(!is_default(&vec![1]));
+        assert!(is_default(&Option::<i32>::None));
+        assert!(!is_default(&Some(1)));
+    }
+
+    #[test]
+    fn test_rand_string() {
+        for n in [0, 1, 2, 3, 4, 5, 10, 63, 64] {
+            let s = rand_string(n);
+            assert_eq!(s.len(), n);
+            assert!(s.chars().all(|c| c.is_ascii_alphanumeric()));
+        }
+    }
+
+    #[test]
+    fn test_rand_string_hex() {
+        for n in [0, 1, 2, 3, 4, 5, 10, 63, 64] {
+            let s = rand_string_hex(n);
+            assert_eq!(s.len(), n);
+            assert!(s.bytes().all(|b| b.is_ascii_hexdigit()));
+        }
+    }
+
+    #[test]
+    fn test_rand_string_all() {
+        let s = rand_string_all(4000);
+        assert!(s.chars().all(|c| ('!'..='~').contains(&c)),);
+    }
 }

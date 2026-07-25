@@ -108,11 +108,13 @@ impl SessionStore {
     ) -> Result<()> {
         let cache_key = (self.configuration.cache_keygen)(session_key.as_ref());
 
-        self.client.expire(&cache_key, ttl.whole_seconds()).await?;
+        self.client
+            .expire(&cache_key, &Self::parse_ttl(ttl))
+            .await?;
         if let Some(id) = id {
             let key =
                 (self.configuration.cache_keygen)(&format!("{}_{}", id, session_key.as_ref()));
-            self.client.expire(&key, ttl.whole_seconds()).await?;
+            self.client.expire(&key, &Self::parse_ttl(ttl)).await?;
         }
         Ok(())
     }
@@ -130,8 +132,8 @@ impl SessionStore {
     }
 
     fn parse_ttl(t: &Duration) -> time::Duration {
-        let t = t.whole_seconds();
+        let t = t.whole_milliseconds();
         let t = if t < 0 { 0 } else { t as u64 };
-        time::Duration::from_secs(t)
+        time::Duration::from_millis(t)
     }
 }

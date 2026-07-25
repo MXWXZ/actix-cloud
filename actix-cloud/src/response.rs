@@ -198,16 +198,20 @@ impl actix_web::Responder for JsonResponse {
                     .insert(String::from("data"), data);
             }
             let body = body.to_string();
-            let mut rsp =
-                HttpResponse::build(actix_web::http::StatusCode::from_u16(self.http_code).unwrap());
+            let mut rsp = HttpResponse::build(
+                actix_web::http::StatusCode::from_u16(self.http_code)
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            );
             rsp.content_type(actix_web::http::header::ContentType::json());
             for builder in self.builder {
                 builder(&mut rsp);
             }
             rsp.message_body(body).unwrap().map_into_left_body()
         } else {
-            let mut rsp =
-                HttpResponse::build(actix_web::http::StatusCode::from_u16(self.http_code).unwrap());
+            let mut rsp = HttpResponse::build(
+                actix_web::http::StatusCode::from_u16(self.http_code)
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            );
             for builder in self.builder {
                 builder(&mut rsp);
             }

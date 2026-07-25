@@ -1,6 +1,6 @@
 use quote::quote;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use syn::parse;
 
 #[derive(Debug)]
@@ -16,7 +16,7 @@ impl parse::Parse for Option {
     }
 }
 
-pub(crate) fn generate_code(data: &HashMap<String, String>) -> proc_macro2::TokenStream {
+pub(crate) fn generate_code(data: &BTreeMap<String, String>) -> proc_macro2::TokenStream {
     let mut locales = Vec::<proc_macro2::TokenStream>::new();
 
     for (k, v) in data {

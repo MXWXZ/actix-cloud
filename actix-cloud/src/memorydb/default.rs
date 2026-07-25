@@ -19,7 +19,7 @@ struct Data(String, Option<i64>);
 
 impl Data {
     fn now() -> i64 {
-        Utc::now().timestamp()
+        Utc::now().timestamp_millis()
     }
 
     fn parse_ttl(ttl: Option<i64>) -> Option<i64> {
@@ -109,7 +109,7 @@ impl MemoryDB for DefaultBackend {
         let mut wlock = self.data.write();
         // full
         if let Some(x) = self.capacity {
-            if x == wlock.len()
+            if x >= wlock.len()
                 && self.gc(&mut wlock, max(x / 10, 1)) == 0
                 && wlock.get(key).is_none()
             {
@@ -149,8 +149,14 @@ impl MemoryDB for DefaultBackend {
         let mut wlock = self.data.write();
         if let Some(v) = wlock.get_mut(key) {
             if v.valid() {
-                v.set_ttl(Some(ttl.as_secs().try_into()?));
-                Ok(Some(v.0.to_owned()))
+                let ret = v.0.to_owned();
+                let ms = ttl.as_millis();
+                if ms == 0 {
+                    wlock.remove(key);
+                } else {
+                    v.set_ttl(Some(ms.try_into()?));
+                }
+                Ok(Some(ret))
             } else {
                 wlock.remove(key);
                 Ok(None)
@@ -161,20 +167,21 @@ impl MemoryDB for DefaultBackend {
     }
 
     async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> Result<()> {
+        let ms = ttl.as_millis();
+        if ms == 0 {
+            return self.del(key).await.map(|_| ());
+        }
         let mut wlock = self.data.write();
         // full
         if let Some(x) = self.capacity {
-            if x == wlock.len()
+            if x >= wlock.len()
                 && self.gc(&mut wlock, max(x / 10, 1)) == 0
                 && wlock.get(key).is_none()
             {
                 bail!("Capacity is full");
             }
         }
-        wlock.insert(
-            key.to_owned(),
-            Data::new(value, Some(ttl.as_secs().try_into()?)),
-        );
+        wlock.insert(key.to_owned(), Data::new(value, Some(ms.try_into()?)));
         Ok(())
     }
 
@@ -182,14 +189,15 @@ impl MemoryDB for DefaultBackend {
         Ok(self.data.write().remove(key).is_some())
     }
 
-    async fn expire(&self, key: &str, ttl: i64) -> Result<bool> {
-        if ttl <= 0 {
+    async fn expire(&self, key: &str, ttl: &Duration) -> Result<bool> {
+        let ms = ttl.as_millis();
+        if ms == 0 {
             self.del(key).await
         } else {
             let mut wlock = self.data.write();
             if let Some(v) = wlock.get_mut(key) {
                 if v.valid() {
-                    v.set_ttl(Some(ttl));
+                    v.set_ttl(Some(ms.try_into()?));
                     Ok(true)
                 } else {
                     wlock.remove(key);
@@ -228,11 +236,13 @@ impl MemoryDB for DefaultBackend {
         Ok(sum)
     }
 
-    async fn ttl(&self, key: &str) -> Result<Option<i64>> {
+    async fn ttl(&self, key: &str) -> Result<Option<Duration>> {
         let rlock = self.data.read();
         if let Some(v) = rlock.get(key) {
             if v.valid() {
-                Ok(v.get_ttl())
+                v.get_ttl()
+                    .map(|x| Ok(Duration::from_millis(x.try_into()?)))
+                    .transpose()
             } else {
                 drop(rlock);
                 self.data.write().remove(key);

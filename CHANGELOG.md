@@ -1,3 +1,15 @@
+# 0.6.0
+## Breaking changes
+1. `seaorm` feature has been moved to actix-cloud-extra.
+2. Memorydb `expire` and `ttl` use `Duration` instead of seconds.
+3. `X-XSS-Protection` is now dropped.
+4. Memorydb now support millisecond TTL. `_ttl` in session is now milliseconds instead of seconds.
+
+## Fix
+1. `rand_string_hex` returns correct length for odd `n`.
+2. `rand_string_all` can now produce `~`.
+3. `Response` no longer panics on invalid HTTP code, returns 500 instead.
+
 # 0.5.1
 ## Changes
 1. Revert 0.5.0 `set_default_hsts` changes.

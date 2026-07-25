@@ -12,11 +12,11 @@ pub trait MemoryDB: Send + Sync {
     async fn get_ex(&self, key: &str, ttl: &Duration) -> Result<Option<String>>;
     async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> Result<()>;
     async fn del(&self, key: &str) -> Result<bool>;
-    async fn expire(&self, key: &str, ttl: i64) -> Result<bool>;
+    async fn expire(&self, key: &str, ttl: &Duration) -> Result<bool>;
     async fn flush(&self) -> Result<()>;
     async fn keys(&self, key: &str) -> Result<Vec<String>>;
     async fn dels(&self, keys: &[String]) -> Result<u64>;
-    async fn ttl(&self, key: &str) -> Result<Option<i64>>;
+    async fn ttl(&self, key: &str) -> Result<Option<Duration>>;
 }
 
 #[cfg(test)]
@@ -88,9 +88,9 @@ mod tests {
 
         r.set_ex(key, value, &Duration::from_secs(2)).await.unwrap();
         assert_eq!(r.get(key).await.unwrap().unwrap(), value);
-        assert_eq!(r.ttl(key).await.unwrap(), Some(2));
+        assert!(r.ttl(key).await.unwrap().unwrap().as_millis() > 1500);
         sleep(Duration::from_secs(1)).await;
-        assert_eq!(r.ttl(key).await.unwrap(), Some(1));
+        assert!(r.ttl(key).await.unwrap().unwrap().as_millis() > 500);
         assert_eq!(
             r.get_ex(key, &Duration::from_secs(2))
                 .await
@@ -98,9 +98,9 @@ mod tests {
                 .unwrap(),
             value
         );
-        assert_eq!(r.ttl(key).await.unwrap(), Some(2));
+        assert!(r.ttl(key).await.unwrap().unwrap().as_millis() > 1500);
         sleep(Duration::from_secs(1)).await;
-        assert_eq!(r.ttl(key).await.unwrap(), Some(1));
+        assert!(r.ttl(key).await.unwrap().unwrap().as_millis() > 500);
         assert_eq!(r.get(key).await.unwrap().unwrap(), value);
         sleep(Duration::from_secs(2)).await;
         assert_eq!(r.ttl(key).await.unwrap(), None);
@@ -124,18 +124,18 @@ mod tests {
 
         r.set(key, value).await.unwrap();
         assert_eq!(r.get(key).await.unwrap().unwrap(), value);
-        assert_eq!(r.expire(key, 1).await.unwrap(), true);
+        assert_eq!(r.expire(key, &Duration::from_secs(1)).await.unwrap(), true);
         sleep(Duration::from_secs(2)).await;
         assert_eq!(r.get(key).await.unwrap(), None);
-        assert_eq!(r.expire(key, 1).await.unwrap(), false);
+        assert_eq!(r.expire(key, &Duration::from_secs(1)).await.unwrap(), false);
 
         r.set_ex(key, value, &Duration::from_secs(1)).await.unwrap();
-        assert_eq!(r.expire(key, 3).await.unwrap(), true);
+        assert_eq!(r.expire(key, &Duration::from_secs(3)).await.unwrap(), true);
         sleep(Duration::from_secs(2)).await;
         assert_eq!(r.get(key).await.unwrap().unwrap(), value);
-        assert_eq!(r.expire(key, -1).await.unwrap(), true);
+        assert_eq!(r.expire(key, &Duration::default()).await.unwrap(), true);
         assert_eq!(r.get(key).await.unwrap(), None);
-        assert_eq!(r.expire(key, 0).await.unwrap(), false);
+        assert_eq!(r.expire(key, &Duration::default()).await.unwrap(), false);
     }
 
     #[tokio::test]

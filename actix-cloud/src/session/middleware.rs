@@ -156,7 +156,7 @@ where
             let mut cookie = Cow::Borrowed(&configuration.cookie);
             if let Some(x) = session_state.get("_ttl") {
                 if let Some(x) = x.as_i64() {
-                    ttl = Duration::seconds(x);
+                    ttl = Duration::milliseconds(x);
                     let mut tmp = cookie.into_owned();
                     tmp.max_age = Some(ttl);
                     cookie = Cow::Owned(tmp);

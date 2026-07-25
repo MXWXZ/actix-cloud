@@ -39,7 +39,7 @@ impl MemoryDB for RedisBackend {
     async fn get_ex(&self, key: &str, ttl: &Duration) -> Result<Option<String>> {
         self.client
             .clone()
-            .get_ex(key, Expiry::EX(ttl.as_secs()))
+            .get_ex(key, Expiry::PX(ttl.as_millis().try_into()?))
             .await
             .map_err(Into::into)
     }
@@ -47,7 +47,7 @@ impl MemoryDB for RedisBackend {
     async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> Result<()> {
         self.client
             .clone()
-            .set_ex(key, value, ttl.as_secs())
+            .pset_ex(key, value, ttl.as_millis().try_into()?)
             .await
             .map_err(Into::into)
     }
@@ -56,10 +56,10 @@ impl MemoryDB for RedisBackend {
         self.client.clone().del(key).await.map_err(Into::into)
     }
 
-    async fn expire(&self, key: &str, ttl: i64) -> Result<bool> {
+    async fn expire(&self, key: &str, ttl: &Duration) -> Result<bool> {
         self.client
             .clone()
-            .expire(key, ttl)
+            .pexpire(key, ttl.as_millis().try_into()?)
             .await
             .map_err(Into::into)
     }
@@ -85,12 +85,12 @@ impl MemoryDB for RedisBackend {
         Ok(res.into_iter().sum())
     }
 
-    async fn ttl(&self, key: &str) -> Result<Option<i64>> {
-        let ret: i64 = self.client.clone().ttl(key).await?;
-        if ret <= 0 {
+    async fn ttl(&self, key: &str) -> Result<Option<Duration>> {
+        let ret: i64 = self.client.clone().pttl(key).await?;
+        if ret < 0 {
             Ok(None)
         } else {
-            Ok(Some(ret))
+            Ok(Some(Duration::from_millis(ret.try_into()?)))
         }
     }
 }
