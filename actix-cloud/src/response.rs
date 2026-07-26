@@ -216,11 +216,13 @@ impl actix_web::Responder for JsonResponse {
             }
             let body = body.to_string();
             let mut rsp = HttpResponse::build(self.http_code);
-            rsp.content_type(actix_web::http::header::ContentType::json());
+            if !body.is_empty() {
+                rsp.content_type(actix_web::http::header::ContentType::json());
+            }
             for builder in self.builder {
                 builder(&mut rsp);
             }
-            if self.message.is_empty() {
+            if body.is_empty() {
                 rsp.finish().map_into_right_body()
             } else {
                 rsp.message_body(body).unwrap().map_into_left_body()

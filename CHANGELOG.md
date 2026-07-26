@@ -1,3 +1,7 @@
+# 0.6.2
+## Fix
+1. `JsonResponse` now does not add JSON headers when `data` is `None`.
+
 # 0.6.1
 ## Breaking changes
 1. `Response` methods now takes `StatusCode` instead of `u16`.
