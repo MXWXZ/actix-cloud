@@ -47,7 +47,7 @@ pub trait ResponseCodeTrait {
 pub type ResponseBuilderFn = Box<dyn Fn(&mut HttpResponseBuilder)>;
 
 pub struct Response<T> {
-    pub http_code: u16,
+    pub http_code: StatusCode,
     pub code: i64,
     pub message: String,
     pub data: Option<T>,
@@ -62,7 +62,7 @@ impl<T> Response<T> {
         C: ResponseCodeTrait,
     {
         Self {
-            http_code: 200,
+            http_code: StatusCode::OK,
             code: r.code(),
             message: r.message().to_owned(),
             data: None,
@@ -72,7 +72,7 @@ impl<T> Response<T> {
         }
     }
 
-    pub fn new_code(code: u16) -> Self {
+    pub fn new_code(code: StatusCode) -> Self {
         Self {
             http_code: code,
             code: 0,
@@ -84,19 +84,36 @@ impl<T> Response<T> {
         }
     }
 
+    pub fn created<C, S>(r: C, location: S) -> Self
+    where
+        C: ResponseCodeTrait,
+        S: Into<String>,
+    {
+        let mut ret = Self::new(r);
+        ret.http_code = StatusCode::CREATED;
+        let location: String = location.into();
+        ret.builder(move |r| {
+            r.insert_header((header::LOCATION, location.clone()));
+        })
+    }
+
+    pub fn no_content() -> Self {
+        Self::new_code(StatusCode::NO_CONTENT)
+    }
+
     pub fn bad_request<S: Into<String>>(s: S) -> Self {
-        Self::new_code(400).message(s)
+        Self::new_code(StatusCode::BAD_REQUEST).message(s)
     }
 
     pub fn forbidden() -> Self {
-        Self::new_code(403)
+        Self::new_code(StatusCode::FORBIDDEN)
     }
 
     pub fn not_found() -> Self {
-        Self::new_code(404)
+        Self::new_code(StatusCode::NOT_FOUND)
     }
 
-    pub fn redirect<S: Into<String>>(code: u16, s: S) -> Self {
+    pub fn redirect<S: Into<String>>(code: StatusCode, s: S) -> Self {
         let s: String = s.into();
         Self::new_code(code).builder(move |r| {
             r.insert_header((header::LOCATION, s.clone()));
@@ -183,7 +200,7 @@ impl actix_web::Responder for JsonResponse {
         self,
         #[allow(unused_variables)] req: &actix_web::HttpRequest,
     ) -> HttpResponse<Self::Body> {
-        if self.http_code == 200 {
+        if self.http_code.is_success() {
             #[cfg(feature = "i18n")]
             let message = self.i18n_message(req);
             #[cfg(not(feature = "i18n"))]
@@ -198,24 +215,26 @@ impl actix_web::Responder for JsonResponse {
                     .insert(String::from("data"), data);
             }
             let body = body.to_string();
-            let mut rsp = HttpResponse::build(
-                actix_web::http::StatusCode::from_u16(self.http_code)
-                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-            );
+            let mut rsp = HttpResponse::build(self.http_code);
             rsp.content_type(actix_web::http::header::ContentType::json());
             for builder in self.builder {
                 builder(&mut rsp);
             }
-            rsp.message_body(body).unwrap().map_into_left_body()
+            if self.message.is_empty() {
+                rsp.finish().map_into_right_body()
+            } else {
+                rsp.message_body(body).unwrap().map_into_left_body()
+            }
         } else {
-            let mut rsp = HttpResponse::build(
-                actix_web::http::StatusCode::from_u16(self.http_code)
-                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-            );
+            let mut rsp = HttpResponse::build(self.http_code);
             for builder in self.builder {
                 builder(&mut rsp);
             }
-            rsp.message_body(self.message).unwrap().map_into_left_body()
+            if self.message.is_empty() {
+                rsp.finish().map_into_right_body()
+            } else {
+                rsp.message_body(self.message).unwrap().map_into_left_body()
+            }
         }
     }
 }

@@ -1,3 +1,15 @@
+# 0.6.1
+## Breaking changes
+1. `Response` methods now takes `StatusCode` instead of `u16`.
+
+## New
+1. `Response::created` — creates a 201 Created response with a Location header.
+2. `Response::no_content` — creates a 204 No Content response.
+
+## Changes
+1. `JsonResponse::respond_to` now uses `is_success()` instead of `== 200`, so all 2xx codes get proper JSON body responses.
+2. `JsonResponse::respond_to` now uses `finish()` (empty body) when the message is empty, instead of wrapping an empty string in a body.
+
 # 0.6.0
 ## Breaking changes
 1. `seaorm` feature has been moved to actix-cloud-extra.
