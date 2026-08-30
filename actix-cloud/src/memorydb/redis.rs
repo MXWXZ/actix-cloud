@@ -6,12 +6,17 @@ use redis::{aio::ConnectionManager, AsyncCommands, Expiry};
 use super::interface::MemoryDB;
 use crate::Result;
 
+/// Redis memory database backend.
+///
+/// Uses a [`ConnectionManager`](redis::aio::ConnectionManager), which reconnects to
+/// Redis automatically, so the backend can be cloned and shared freely.
 #[derive(Clone)]
 pub struct RedisBackend {
     client: ConnectionManager,
 }
 
 impl RedisBackend {
+    /// Connect to Redis with a DSN like `redis://user:pass@127.0.0.1:6379/0`.
     pub async fn new(dsn: &str) -> Result<Self> {
         let client = ConnectionManager::new(redis::Client::open(dsn)?).await?;
         Ok(Self { client })

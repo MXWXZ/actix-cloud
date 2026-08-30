@@ -1,3 +1,8 @@
+//! Build-time code generation for response codes (feature `response-build`).
+//!
+//! Call [`generate_response`] from `build.rs` to walk a directory of YAML files and
+//! emit one enum per file implementing [`ResponseCodeTrait`](crate::response::ResponseCodeTrait).
+//! See the `examples/response` example for the full setup.
 use anyhow::Result;
 use quote::{format_ident, quote};
 use std::{
@@ -9,16 +14,27 @@ use std::{
 use walkdir::WalkDir;
 use yaml_rust2::YamlLoader;
 
+/// Errors raised while parsing response YAML files.
 #[derive(thiserror::Error, Debug)]
 pub enum BuildError {
+    /// A YAML document does not follow the expected `name: {code, message}` shape.
     #[error("response file format invalid")]
     Format,
 
+    /// A file name cannot be turned into a valid enum name.
     #[error("response file name invalid")]
     File,
 }
 
-/// Generate response file from yml.
+/// Generate response enums from YAML files.
+///
+/// Walks `input` (relative to the crate root) and writes one formatted Rust enum per
+/// YAML file into `OUT_DIR/output`. Each YAML entry is `name: {code, message}`; the
+/// enum is named after the file stem (e.g. `general.yml` → `GeneralResponse`).
+///
+/// - `import_prefix`: prefix prepended to the `actix_cloud` import, e.g. `crate::` when
+///   re-exported by the calling crate.
+/// - `output`: generated file name inside `OUT_DIR`, included via `include!`.
 ///
 /// This function should be used in `build.rs`.
 /// ```ignore
@@ -58,8 +74,15 @@ pub fn generate_response(import_prefix: &str, input: &str, output: &str) -> Resu
             }
 
             let file_stem = entry.path().file_stem().ok_or(BuildError::File)?;
-            let mut s = file_stem.to_str().ok_or(BuildError::File)?.to_owned();
-            let s = s.remove(0).to_uppercase().to_string() + &s;
+            let stem = file_stem.to_str().ok_or(BuildError::File)?;
+            if stem.is_empty()
+                || !stem.starts_with(|c: char| c.is_alphabetic() || c == '_')
+                || !stem.chars().all(|c| c.is_alphanumeric() || c == '_')
+            {
+                return Err(BuildError::File.into());
+            }
+            let mut chars = stem.chars();
+            let s = chars.next().unwrap().to_uppercase().collect::<String>() + chars.as_str();
             let enum_name = format_ident!("{}Response", s);
             let mut enum_code = Vec::new();
             for i in 0..code_vec.len() {

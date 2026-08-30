@@ -1,7 +1,7 @@
 use std::io;
 
 use actix_cloud::{
-    actix_web::{web::get, App, HttpServer, Responder},
+    actix_web::{http::StatusCode, web::get, App, HttpServer, Responder},
     build_router,
     i18n::{i18n, Locale},
     logger::LoggerBuilder,
@@ -23,7 +23,7 @@ async fn page() -> RspResult<impl Responder> {
 }
 
 async fn page_no_translate() -> RspResult<impl Responder> {
-    Ok(JsonResponse::new_code(200).message("response.ok"))
+    Ok(JsonResponse::new_code(StatusCode::OK).message("response.ok"))
 }
 
 fn init_router() -> Vec<Router> {

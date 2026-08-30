@@ -8,6 +8,15 @@ use std::{collections::BTreeMap, env, path};
 #[cfg(feature = "i18n")]
 mod i18n;
 
+/// Attribute macro for the `main` function, equivalent to
+/// `#[actix_web::rt::main(system = "actix_cloud::actix_web::rt::System")]`.
+///
+/// ```ignore
+/// #[actix_cloud::main]
+/// async fn main() -> std::io::Result<()> {
+///     Ok(())
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn main(_: TokenStream, item: TokenStream) -> TokenStream {
     let mut output: TokenStream = (quote! {

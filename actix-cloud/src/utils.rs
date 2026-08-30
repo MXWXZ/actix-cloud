@@ -67,6 +67,9 @@ pub fn restart() -> Result<Child> {
 
 #[cfg(feature = "rustls")]
 /// Load SSL certificate and key.
+///
+/// Only PKCS 8 private keys are supported (`BEGIN PRIVATE KEY`). The aws-lc-rs
+/// provider is installed as the default rustls crypto provider.
 pub fn load_rustls_config<P: AsRef<std::path::Path>>(
     cert: P,
     key: P,

@@ -6,4 +6,15 @@ edition = "2021"
 [dependencies]
 qstring = "0.7"
 
-actix-cloud = { path = "../../actix-cloud", features = ["traceid"] }
+actix-cloud = { path = "../../actix-cloud", default-features = false, features = [
+    "utils",
+    "rustls",
+    "macros",
+    "logger",
+    "router",
+    "request",
+    "traceid",
+    "state",
+    "security",
+    "response-json",
+] }

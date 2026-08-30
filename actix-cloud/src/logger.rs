@@ -26,17 +26,22 @@ use tokio::{
 };
 use tracing::Level;
 
+/// One structured log entry, handed to the writers (and `filter`/`transformer`).
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LogItem {
+    /// Timestamp: microseconds since epoch (JSON output) or formatted string
+    /// (color output). Overridable through the reserved `_time` field.
     pub time: Value,
     #[serde_as(as = "DisplayFromStr")]
     pub level: Level,
     pub message: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub target: String,
+    /// Extra key-value pairs attached to the event (`log.*` fields are internal).
     #[serde(skip_serializing_if = "Map::is_empty")]
     pub fields: Map<String, Value>,
+    /// Key-value pairs of the current span (`http.*`/`otel.*`/`name` are internal).
     #[serde(skip_serializing_if = "Map::is_empty")]
     pub span: Map<String, Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,6 +117,25 @@ impl LogSender {
     }
 }
 
+/// Build and register the tracing subscriber that forwards JSON events into `tx`.
+fn init_subscriber(
+    level: Level,
+    filename: bool,
+    line_number: bool,
+    tx: UnboundedSender<Map<String, Value>>,
+) {
+    tracing_subscriber::fmt()
+        .with_max_level(level)
+        .with_writer(LogSender::new(tx))
+        .without_time()
+        .with_file(filename)
+        .with_line_number(line_number)
+        .json()
+        .init();
+}
+
+/// Handle to the running logger; clone and pass around (e.g. store in `GlobalState`)
+/// to re-init the subscriber or feed raw log maps from plugins.
 #[derive(Clone)]
 pub struct Logger {
     tx: UnboundedSender<Map<String, Value>>,
@@ -126,20 +150,23 @@ impl Logger {
     /// Init tracing logger.
     /// A new subscriber will be registered.
     pub fn init(&self, builder: &LoggerBuilder) {
-        tracing_subscriber::fmt()
-            .with_max_level(builder.level)
-            .with_writer(LogSender::new(self.tx.clone()))
-            .without_time()
-            .with_file(builder.filename)
-            .with_line_number(builder.line_number)
-            .json()
-            .init();
+        init_subscriber(
+            builder.level,
+            builder.filename,
+            builder.line_number,
+            self.tx.clone(),
+        );
     }
 }
 
+/// Writer callback: render one [`LogItem`] to the given sink (stdout/stderr).
 pub type WriterFn = Box<dyn Fn(LogItem, Box<dyn Write>) -> Result<()> + Send>;
+/// Filter callback: return `false` to drop a log entry before the transformer.
 pub type FilterFn = Box<dyn Fn(&LogItem) -> bool + Send>;
+/// Transformer callback: rewrite a log entry before writing.
 pub type TransformerFn = Box<dyn Fn(LogItem) -> LogItem + Send>;
+/// Handler callback: invoked first on the raw JSON map; return `false` to stop
+/// further processing of the entry.
 pub type HandlerFn = Box<dyn Fn(&Map<String, Value>) -> Pin<Box<dyn Future<Output = bool>>> + Send>;
 
 /// Keep this guard alive when you use the logger.
@@ -213,12 +240,10 @@ impl LoggerBuilder {
             Self::fmt_level(&item.level),
             item.target.bright_black()
         )?;
-        if let Some(filename) = item.filename {
-            if let Some(line_number) = item.line_number {
-                buf += &format!("({}:{})", filename, line_number)
-                    .bright_black()
-                    .to_string();
-            }
+        if let (Some(filename), Some(line_number)) = (item.filename, item.line_number) {
+            buf += &format!("({filename}:{line_number})")
+                .bright_black()
+                .to_string();
         }
         write!(buf, "{} {}", ":".bright_black(), item.message)?;
         for (k, v) in &item.fields {
@@ -298,7 +323,7 @@ impl LoggerBuilder {
     ///
     /// The customized handler will be invoked first, even before the filter.
     /// When the return value is false, further handler will be skipped.
-    /// Otherwise, normal log hander will still be invoked.
+    /// Otherwise, normal log handler will still be invoked.
     ///
     /// # Warning
     /// Do not perform heavy workloads, it can block other logs!
@@ -347,14 +372,7 @@ impl LoggerBuilder {
     pub fn start(self) -> (Logger, LoggerGuard) {
         let (tx, mut rx) = unbounded_channel();
         let (stop_tx, mut stop_rx) = unbounded_channel();
-        tracing_subscriber::fmt()
-            .with_max_level(self.level)
-            .with_writer(LogSender::new(tx.clone()))
-            .without_time()
-            .with_file(self.filename)
-            .with_line_number(self.line_number)
-            .json()
-            .init();
+        init_subscriber(self.level, self.filename, self.line_number, tx.clone());
 
         let join = thread::spawn(move || {
             let handler = |v: Map<String, Value>| async {

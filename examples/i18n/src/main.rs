@@ -5,8 +5,7 @@ use actix_cloud::{
     t,
 };
 
-#[actix_cloud::main]
-async fn main() -> io::Result<()> {
+fn main() {
     let locale = Locale::new("en-US").add_locale(i18n!("locale"));
 
     println!("Default: {}", t!(locale, "hello.world"));
@@ -19,5 +18,4 @@ async fn main() -> io::Result<()> {
     println!("Fallback: {}", t!(locale, "english.only", "zh-CN"));
     println!("Not exist default: {}", t!(locale, "not.exist"));
     println!("Not exist translate: {}", t!(locale, "not.exist", "zh-CN"));
-    Ok(())
 }

@@ -11,7 +11,7 @@ jobs:
     name: Check code
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
       - name: Check
@@ -26,7 +26,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Login
         run: cargo login ${{ secrets.CRATES_IO_TOKEN }}
       - name: Push to crate.io
@@ -38,6 +38,6 @@ jobs:
           cargo publish --no-verify || true
           cd -
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: true

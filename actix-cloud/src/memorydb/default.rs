@@ -15,6 +15,7 @@ use priority_queue::PriorityQueue;
 use super::interface::MemoryDB;
 use crate::Result;
 
+/// Internal entry: `(value, absolute expiration timestamp in ms)`. `None` means no TTL.
 struct Data(String, Option<i64>);
 
 impl Data {
@@ -50,6 +51,20 @@ impl Data {
     }
 }
 
+/// Built-in in-process memory database backend.
+///
+/// Keys and values live in a `HashMap` guarded by an `RwLock`; expired entries are
+/// removed lazily on access, plus eagerly during capacity-driven GC.
+///
+/// # Warning
+/// The default backend is only for demo purpose. The performance is not guaranteed.
+/// Use [`RedisBackend`](super::redis::RedisBackend) or your own [`MemoryDB`]
+/// implementation for production workloads.
+///
+/// When `capacity` is set and the database is full, the eviction policy is:
+/// - Evict 10% keys at a time (at least 1).
+/// - Expired keys go first, then keys having TTL attribute, sorted by TTL from shortest to longest.
+/// - If no keys are evicted, an error will be returned.
 #[derive(Clone)]
 pub struct DefaultBackend {
     data: Arc<RwLock<HashMap<String, Data>>>,
@@ -57,6 +72,10 @@ pub struct DefaultBackend {
 }
 
 impl DefaultBackend {
+    /// Create a new backend.
+    ///
+    /// `capacity` limits the maximum number of entries (`None` means unbounded —
+    /// be aware that this allows memory exhaustion).
     pub fn new(capacity: Option<usize>) -> Self {
         Self {
             data: Default::default(),

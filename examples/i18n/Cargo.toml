@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-actix-cloud = { path = "../../actix-cloud", features = ["i18n"] }
+actix-cloud = { path = "../../actix-cloud", default-features = false, features = [
+    "i18n",
+] }

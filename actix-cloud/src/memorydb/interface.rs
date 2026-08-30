@@ -4,18 +4,52 @@ use async_trait::async_trait;
 
 use crate::Result;
 
+/// Object-safe async key-value database trait.
+///
+/// All values are strings and all TTLs are millisecond-precision [`Duration`]s.
+/// This is the abstraction behind session storage and CSRF token storage; you can
+/// implement it to plug in your own backend (see [`DefaultBackend`](super::default::DefaultBackend)
+/// and [`RedisBackend`](super::redis::RedisBackend) for reference implementations).
+///
+/// The trait is implemented for `Arc<dyn MemoryDB>`, so backends are shared as
+/// `Arc<dyn MemoryDB>` throughout the framework.
 #[async_trait]
 pub trait MemoryDB: Send + Sync {
+    /// Set `key` to `value` without expiration.
     async fn set(&self, key: &str, value: &str) -> Result<()>;
+
+    /// Get the value of `key`, or `None` if it does not exist or has expired.
     async fn get(&self, key: &str) -> Result<Option<String>>;
+
+    /// Get the value of `key` and delete it atomically.
     async fn get_del(&self, key: &str) -> Result<Option<String>>;
+
+    /// Get the value of `key` and reset its TTL to `ttl`.
     async fn get_ex(&self, key: &str, ttl: &Duration) -> Result<Option<String>>;
+
+    /// Set `key` to `value` with an expiration of `ttl`.
     async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> Result<()>;
+
+    /// Delete `key`. Returns whether the key existed.
     async fn del(&self, key: &str) -> Result<bool>;
+
+    /// Set the TTL of `key` to `ttl`. Returns whether the key exists.
+    /// A zero `ttl` deletes the key.
     async fn expire(&self, key: &str, ttl: &Duration) -> Result<bool>;
+
+    /// Remove all keys from the database.
+    ///
+    /// # Warning
+    /// On shared backends such as Redis this flushes the whole database (`FLUSHDB`).
     async fn flush(&self) -> Result<()>;
+
+    /// Get all keys matching the glob `key` pattern (e.g. `prefix*`).
     async fn keys(&self, key: &str) -> Result<Vec<String>>;
+
+    /// Delete multiple keys. Returns the number of keys deleted.
     async fn dels(&self, keys: &[String]) -> Result<u64>;
+
+    /// Get the remaining TTL of `key`, or `None` if the key does not exist or has no TTL.
     async fn ttl(&self, key: &str) -> Result<Option<Duration>>;
 }
 

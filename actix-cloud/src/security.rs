@@ -1,7 +1,12 @@
+//! Middleware to add security headers to every response.
+//!
+//! Wrap the app with [`SecurityHeader::default().build()`](SecurityHeader::build) and
+//! customize fields or enable HSTS (see [`SecurityHeader::set_default_hsts`]) as needed.
 use std::fmt::Display;
 
 use actix_web::middleware;
 
+/// Value of the `Referrer-Policy` header.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum RefererPolicy {
@@ -30,6 +35,7 @@ impl Display for RefererPolicy {
     }
 }
 
+/// Value of the `X-Frame-Options` header.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum XFrameOptions {
@@ -46,6 +52,7 @@ impl Display for XFrameOptions {
     }
 }
 
+/// Value of the `Cross-Origin-Opener-Policy` header.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum CrossOriginOpenerPolicy {
@@ -64,6 +71,8 @@ impl Display for CrossOriginOpenerPolicy {
     }
 }
 
+/// Value of the `Strict-Transport-Security` (HSTS) header. The payload is `max-age` in
+/// seconds; variants add the `includeSubDomains` / `preload` directives.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum StrictTransportSecurity {
@@ -86,6 +95,7 @@ impl Display for StrictTransportSecurity {
     }
 }
 
+/// Security headers applied to every response by [`SecurityHeader::build`].
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct SecurityHeader {
@@ -116,6 +126,8 @@ impl SecurityHeader {
         self.strict_transport_security = Some(StrictTransportSecurity::Preload(31536000));
     }
 
+    /// Build the actix-web [`DefaultHeaders`](middleware::DefaultHeaders) middleware
+    /// carrying all configured security headers (plus HSTS when set).
     pub fn build(self) -> middleware::DefaultHeaders {
         let mut ret = middleware::DefaultHeaders::new()
             .add(("X-Content-Type-Options", "nosniff"))

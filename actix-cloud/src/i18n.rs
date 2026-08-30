@@ -68,14 +68,21 @@ macro_rules! map {
     }};
 }
 
+/// Translation table plus the default locale used as fallback.
+///
+/// Load translations at compile time with `Locale::new("en-US").add_locale(i18n!("locale"))`
+/// and translate with the [`t!`] macro.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug)]
 pub struct Locale {
+    /// Flattened map of `"locale.key"` to translated text.
     pub locale: BTreeMap<String, String>,
+    /// Default locale identifier, e.g. `en-US`.
     pub default: String,
 }
 
 impl Locale {
+    /// Create a locale table with `default` as the fallback locale.
     pub fn new<S: Into<String>>(default: S) -> Self {
         Self {
             locale: BTreeMap::new(),

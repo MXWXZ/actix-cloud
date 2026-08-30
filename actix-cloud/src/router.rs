@@ -1,3 +1,8 @@
+//! Declarative router with per-route auth and CSRF configuration.
+//!
+//! Build a `Vec<Router>` and pass it to [`build_router`]; the returned closure is
+//! configured on a scope (`scope("/api").configure(build_router(...))`). Each route
+//! runs the [`Checker`] auth guard first, then CSRF (feature `csrf`).
 use std::{
     fmt::Debug,
     future::{ready, Ready},
@@ -16,6 +21,8 @@ use async_trait::async_trait;
 use futures::future::LocalBoxFuture;
 
 #[cfg(feature = "csrf")]
+/// Configure routes on a scope, wrapping each route with the CSRF middleware
+/// (innermost) and the auth guard.
 pub fn build_router<F, Fut>(
     router: Vec<Router>,
     csrf: crate::csrf::Middleware<F>,
@@ -40,6 +47,7 @@ where
 }
 
 #[cfg(not(feature = "csrf"))]
+/// Configure routes on a scope, wrapping each route with the auth guard.
 pub fn build_router(router: Vec<Router>) -> impl FnOnce(&mut ServiceConfig) {
     |cfg| {
         for i in router {
@@ -50,12 +58,20 @@ pub fn build_router(router: Vec<Router>) -> impl FnOnce(&mut ServiceConfig) {
     }
 }
 
+/// Per-route permission checker.
+///
+/// Return `Ok(false)` to reject the request with 403; an `Err` yields 500. `?Send` is
+/// required because actix runs each worker single-threaded.
 #[async_trait(?Send)]
 pub trait Checker {
     async fn check(&self, req: &mut ServiceRequest) -> Result<bool>;
 }
 
 #[cfg(feature = "csrf")]
+/// Per-route CSRF enforcement level (see [`crate::csrf`]).
+///
+/// By default checks apply to all unsafe methods; `ForceHeader`/`ForceParam` check on
+/// every method, and `Disabled` never checks.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, enum_as_inner::EnumAsInner)]
 pub enum CSRFType {
@@ -66,11 +82,16 @@ pub enum CSRFType {
     Disabled,
 }
 
+/// A route entry for [`build_router`].
 pub struct Router {
+    /// Route path registered on the scope.
     pub path: String,
+    /// Actix-web route (method + handler).
     pub route: Route,
+    /// Auth checker; `None` skips the auth check for this route.
     pub checker: Option<Rc<dyn Checker>>,
     #[cfg(feature = "csrf")]
+    /// CSRF enforcement level for this route.
     pub csrf: CSRFType,
 }
 

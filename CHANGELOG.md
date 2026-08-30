@@ -1,3 +1,13 @@
+# 0.6.3
+## Fix
+1. `JsonResponse` no longer sets JSON content-type on 204 No Content responses.
+2. `ServerHandle::stop` no longer panics when the server has never been started.
+3. `request::Middleware` no longer panics when `GlobalState` is not registered, `TracingLogger` is not wrapped before it, or the peer address is absent; it falls back to default values instead.
+4. `response_build::generate_response` now returns `BuildError::File` instead of panicking on invalid response file names.
+
+## Changes
+1. Documentation improvements across the crate.
+
 # 0.6.2
 ## Fix
 1. `JsonResponse` now does not add JSON headers when `data` is `None`.

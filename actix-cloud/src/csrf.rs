@@ -1,3 +1,10 @@
+//! CSRF protection based on the [double submit cookie] pattern.
+//!
+//! The token is stored in a cookie and must be echoed in a header (or a query
+//! parameter, generally only for websocket). Checks are applied per route through
+//! [`crate::build_router`], and run **after** the auth checker.
+//!
+//! [double submit cookie]: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html#alternative-using-a-double-submit-cookie-pattern
 use std::{future::Future, rc::Rc};
 
 use actix_web::{
@@ -9,6 +16,11 @@ use qstring::QString;
 
 use crate::router::CSRFType;
 
+/// CSRF middleware, configured through [`crate::build_router`].
+///
+/// `cookie` is the cookie holding the token, `header` is the header (or query
+/// parameter) expected to carry the same token, and `checker` is an extra validation
+/// callback invoked with the request and the token after both values match.
 pub struct Middleware<F> {
     cookie: Rc<String>,
     header: Rc<String>,
@@ -79,16 +91,17 @@ where
     Fut: Future<Output = Result<bool, actix_web::Error>>,
 {
     fn get_safe_header(req: &ServiceRequest, name: &str) -> Option<String> {
-        let mut ret: Vec<&str> = req
+        let mut values = req
             .headers()
             .get_all(name)
             .map(|x| x.to_str().unwrap_or_default())
-            .filter(|x| !x.is_empty())
-            .collect();
-        if ret.len() != 1 {
+            .filter(|x| !x.is_empty());
+        let ret = values.next()?;
+        // Reject duplicated header values to avoid smuggling.
+        if values.next().is_some() {
             return None;
         }
-        ret.pop().map(ToOwned::to_owned)
+        Some(ret.to_owned())
     }
 
     async fn check_csrf(
@@ -136,24 +149,16 @@ where
         let cookie = self.cookie.clone();
         let checker = self.checker.clone();
         Box::pin(async move {
+            // `CSRFType` is inserted per-route by the router guard; the middleware must
+            // be used through `build_router`.
             let csrf = req.extensions().get::<CSRFType>().unwrap().to_owned();
-            if csrf.is_force_header() || csrf.is_force_param() || !req.method().is_safe() {
-                let ret = match csrf {
-                    CSRFType::Header => {
-                        Self::check_csrf(&req, &cookie, &header, checker, false).await
-                    }
-                    CSRFType::Param => {
-                        Self::check_csrf(&req, &cookie, &header, checker, true).await
-                    }
-                    CSRFType::ForceHeader => {
-                        Self::check_csrf(&req, &cookie, &header, checker, false).await
-                    }
-                    CSRFType::ForceParam => {
-                        Self::check_csrf(&req, &cookie, &header, checker, true).await
-                    }
-                    CSRFType::Disabled => Ok(true),
-                }?;
-                if !ret {
+            let enforce = !csrf.is_disabled()
+                && (csrf.is_force_header() || csrf.is_force_param() || !req.method().is_safe());
+            if enforce {
+                // `Param`/`ForceParam` also accept the token as a query parameter,
+                // generally only used for websocket.
+                let allow_param = csrf.is_param() || csrf.is_force_param();
+                if !Self::check_csrf(&req, &cookie, &header, checker, allow_param).await? {
                     return Err(actix_web::error::ErrorBadRequest("CSRF check failed"));
                 }
             }
