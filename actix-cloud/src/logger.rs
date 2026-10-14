@@ -8,6 +8,7 @@ use std::{
     fmt::{Display, Write as _},
     future::Future,
     io::{self, stderr, stdout, Write},
+    panic::Location,
     pin::Pin,
     str::FromStr,
     sync::{mpsc, OnceLock},
@@ -57,7 +58,7 @@ macro_rules! fatal {
 /// Import this trait to use `.unwrap_fatal()` / `.expect_fatal()`.
 pub trait FatalExt<T, E> {
     /// Return the contained value, or log the error's [`Display`] output via [`fatal!`]
-    /// and exit with code 1.
+    /// and exit with code 1. Like [`Result::unwrap`], the log records the caller's location.
     ///
     /// # Examples
     /// ```no_run
@@ -65,10 +66,12 @@ pub trait FatalExt<T, E> {
     ///
     /// let home = std::env::var("HOME").unwrap_fatal();
     /// ```
+    #[track_caller]
     fn unwrap_fatal(self) -> T;
 
     /// Return the contained value, or log `msg` together with the error's [`Display`]
-    /// output via [`fatal!`] and exit with code 1.
+    /// output via [`fatal!`] and exit with code 1. Like [`Result::expect`], the log
+    /// records the caller's location.
     ///
     /// # Examples
     /// ```no_run
@@ -76,21 +79,34 @@ pub trait FatalExt<T, E> {
     ///
     /// let home = std::env::var("HOME").expect_fatal("HOME is not set");
     /// ```
+    #[track_caller]
     fn expect_fatal(self, msg: &str) -> T;
 }
 
 impl<T, E: Display> FatalExt<T, E> for Result<T, E> {
+    #[track_caller]
     fn unwrap_fatal(self) -> T {
         match self {
             Ok(value) => value,
-            Err(e) => crate::fatal!("{e}"),
+            Err(e) => {
+                let loc = Location::caller();
+                crate::fatal!(_filename = loc.file(), _line_number = loc.line(), "{e}")
+            }
         }
     }
 
+    #[track_caller]
     fn expect_fatal(self, msg: &str) -> T {
         match self {
             Ok(value) => value,
-            Err(e) => crate::fatal!("{msg}: {e}"),
+            Err(e) => {
+                let loc = Location::caller();
+                crate::fatal!(
+                    _filename = loc.file(),
+                    _line_number = loc.line(),
+                    "{msg}: {e}"
+                )
+            }
         }
     }
 }
@@ -113,8 +129,10 @@ pub struct LogItem {
     /// Key-value pairs of the current span (`http.*`/`otel.*`/`name` are internal).
     #[serde(skip_serializing_if = "Map::is_empty")]
     pub span: Map<String, Value>,
+    /// File name of the event. Overridable through the reserved `_filename` field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
+    /// Line number of the event. Overridable through the reserved `_line_number` field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line_number: Option<i64>,
 }
@@ -136,12 +154,20 @@ impl LogItem {
             .to_owned();
         let level = Level::from_str(s.get("level").and_then(Value::as_str).unwrap_or("ERROR"))
             .unwrap_or(Level::ERROR);
-        let filename = s
+        let mut filename = s
             .get("filename")
             .and_then(Value::as_str)
             .map(str::to_string);
-        let line_number = s.get("line_number").and_then(Value::as_i64);
+        let mut line_number = s.get("line_number").and_then(Value::as_i64);
         let mut fields = Self::json_take_object(&mut s, "fields");
+        // Reserved overrides, set e.g. by [`FatalExt`] to attribute the entry to its
+        // real caller. Always removed so they never reach the writers.
+        if let Some(v) = fields.remove("_filename").as_ref().and_then(Value::as_str) {
+            filename = Some(v.to_owned());
+        }
+        if let Some(v) = fields.remove("_line_number").and_then(|v| v.as_i64()) {
+            line_number = Some(v);
+        }
         let message = fields
             .remove("message")
             .unwrap_or_default()

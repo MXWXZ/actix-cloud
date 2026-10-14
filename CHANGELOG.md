@@ -1,3 +1,10 @@
+# 0.6.5
+## New
+1. Log entries support the reserved `_filename` and `_line_number` fields to override the recorded file and line, like the existing `_time` field.
+
+## Changes
+1. `logger::FatalExt` — `unwrap_fatal()` and `expect_fatal()` now record the caller's file and line in the log entry instead of the line inside `logger.rs`.
+
 # 0.6.4
 ## New
 1. `fatal!` — logs a message at `ERROR` level, flushes all queued logs, then exits the process with code 1.
