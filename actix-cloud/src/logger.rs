@@ -5,11 +5,12 @@
 //! This wrapper makes it thread safe, even for FFI libraries.
 //! You can use it everywhere and freely.
 use std::{
-    fmt::Write as _,
+    fmt::{Display, Write as _},
     future::Future,
     io::{self, stderr, stdout, Write},
     pin::Pin,
     str::FromStr,
+    sync::{mpsc, OnceLock},
     thread::{self, JoinHandle},
 };
 
@@ -25,6 +26,74 @@ use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedSender},
 };
 use tracing::Level;
+
+/// Log a message at `ERROR` level and terminate the process with exit code 1.
+///
+/// Takes the same arguments as [`tracing::error!`].
+///
+/// Before exiting, [`crate::logger::flush`] is called so that every log entry queued so
+/// far (including this one) has been written out. Destructors will not run — in particular
+/// [`LoggerGuard`] is **not** dropped — so only call this when the process cannot continue.
+///
+/// # Examples
+/// ```no_run
+/// use actix_cloud::fatal;
+///
+/// let path = "config.yml";
+/// fatal!("config file not found: {}", path);
+/// ```
+#[macro_export]
+macro_rules! fatal {
+    ($($arg:tt)*) => {{
+        $crate::tracing::error!($($arg)*);
+        $crate::logger::flush();
+        std::process::exit(1);
+    }};
+}
+
+/// Extension trait for [`Result`] adding [`FatalExt::unwrap_fatal`] and
+/// [`FatalExt::expect_fatal`].
+///
+/// Import this trait to use `.unwrap_fatal()` / `.expect_fatal()`.
+pub trait FatalExt<T, E> {
+    /// Return the contained value, or log the error's [`Display`] output via [`fatal!`]
+    /// and exit with code 1.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use actix_cloud::logger::FatalExt;
+    ///
+    /// let home = std::env::var("HOME").unwrap_fatal();
+    /// ```
+    fn unwrap_fatal(self) -> T;
+
+    /// Return the contained value, or log `msg` together with the error's [`Display`]
+    /// output via [`fatal!`] and exit with code 1.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use actix_cloud::logger::FatalExt;
+    ///
+    /// let home = std::env::var("HOME").expect_fatal("HOME is not set");
+    /// ```
+    fn expect_fatal(self, msg: &str) -> T;
+}
+
+impl<T, E: Display> FatalExt<T, E> for Result<T, E> {
+    fn unwrap_fatal(self) -> T {
+        match self {
+            Ok(value) => value,
+            Err(e) => crate::fatal!("{e}"),
+        }
+    }
+
+    fn expect_fatal(self, msg: &str) -> T {
+        match self {
+            Ok(value) => value,
+            Err(e) => crate::fatal!("{msg}: {e}"),
+        }
+    }
+}
 
 /// One structured log entry, handed to the writers (and `filter`/`transformer`).
 #[serde_as]
@@ -186,6 +255,31 @@ impl Drop for LoggerGuard {
             let _ = x.join();
         }
     }
+}
+
+/// Control channel sender to the logger thread started by [`LoggerBuilder::start`],
+/// used by [`flush`]. A flush request carries the channel to ack on.
+static FLUSH_TX: OnceLock<UnboundedSender<mpsc::Sender<()>>> = OnceLock::new();
+
+/// Wait until every log entry queued before this call has been handled by the logger thread.
+///
+/// Sends a flush request over the control channel; on receipt the logger thread drains the
+/// log channel and replies through the sender carried by the request, so by the time this
+/// returns everything queued before the call — including anything the caller logged right
+/// before — has been written out. Used by [`fatal!`], and usable before any other kind of
+/// process exit.
+///
+/// Returns immediately if no logger has been started or if the logger thread is gone.
+pub fn flush() {
+    let Some(tx) = FLUSH_TX.get() else {
+        return;
+    };
+    let (ack_tx, ack_rx) = mpsc::channel();
+    if tx.send(ack_tx).is_err() {
+        return;
+    }
+    // Blocks until the logger thread replies, or drops the ack sender on exit.
+    let _ = ack_rx.recv();
 }
 
 pub struct LoggerBuilder {
@@ -373,6 +467,8 @@ impl LoggerBuilder {
         let (tx, mut rx) = unbounded_channel();
         let (stop_tx, mut stop_rx) = unbounded_channel();
         init_subscriber(self.level, self.filename, self.line_number, tx.clone());
+        let (flush_tx, mut flush_rx) = unbounded_channel::<mpsc::Sender<()>>();
+        let _ = FLUSH_TX.set(flush_tx);
 
         let join = thread::spawn(move || {
             let handler = |v: Map<String, Value>| async {
@@ -421,6 +517,12 @@ impl LoggerBuilder {
                     select! {
                         Some(v) = rx.recv() => {
                             handler(v).await;
+                        },
+                        Some(ack) = flush_rx.recv() => {
+                            while let Ok(v) = rx.try_recv(){
+                                handler(v).await;
+                            }
+                            let _ = ack.send(());
                         },
                         _ = stop_rx.recv() => {
                             while let Ok(v) = rx.try_recv(){

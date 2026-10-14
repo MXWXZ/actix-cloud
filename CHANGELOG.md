@@ -1,3 +1,9 @@
+# 0.6.4
+## New
+1. `fatal!` — logs a message at `ERROR` level, flushes all queued logs, then exits the process with code 1.
+2. `logger::flush()` — waits until every log entry queued before the call has been written out.
+3. `logger::FatalExt` — `unwrap_fatal()` and `expect_fatal()` for `Result<T, E>` (`E: Display`), which log the error and exit with code 1 on `Err`.
+
 # 0.6.3
 ## Fix
 1. `JsonResponse` no longer sets JSON content-type on 204 No Content responses.
