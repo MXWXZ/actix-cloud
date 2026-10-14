@@ -5,10 +5,9 @@
 //! This wrapper makes it thread safe, even for FFI libraries.
 //! You can use it everywhere and freely.
 use std::{
-    fmt::{Display, Write as _},
+    fmt::Write as _,
     future::Future,
     io::{self, stderr, stdout, Write},
-    panic::Location,
     pin::Pin,
     str::FromStr,
     sync::{mpsc, OnceLock},
@@ -52,63 +51,46 @@ macro_rules! fatal {
     }};
 }
 
-/// Extension trait for [`Result`] adding [`FatalExt::unwrap_fatal`] and
-/// [`FatalExt::expect_fatal`].
+/// Unwrap a [`Result`](std::result::Result), or log the error's
+/// [`Display`](std::fmt::Display) output via [`fatal!`] and exit with code 1.
 ///
-/// Import this trait to use `.unwrap_fatal()` / `.expect_fatal()`.
-pub trait FatalExt<T, E> {
-    /// Return the contained value, or log the error's [`Display`] output via [`fatal!`]
-    /// and exit with code 1. Like [`Result::unwrap`], the log records the caller's location.
-    ///
-    /// # Examples
-    /// ```no_run
-    /// use actix_cloud::logger::FatalExt;
-    ///
-    /// let home = std::env::var("HOME").unwrap_fatal();
-    /// ```
-    #[track_caller]
-    fn unwrap_fatal(self) -> T;
-
-    /// Return the contained value, or log `msg` together with the error's [`Display`]
-    /// output via [`fatal!`] and exit with code 1. Like [`Result::expect`], the log
-    /// records the caller's location.
-    ///
-    /// # Examples
-    /// ```no_run
-    /// use actix_cloud::logger::FatalExt;
-    ///
-    /// let home = std::env::var("HOME").expect_fatal("HOME is not set");
-    /// ```
-    #[track_caller]
-    fn expect_fatal(self, msg: &str) -> T;
+/// Expands at the call site, so the log records the caller's module, file and line.
+///
+/// # Examples
+/// ```no_run
+/// use actix_cloud::unwrap_fatal;
+///
+/// let home = unwrap_fatal!(std::env::var("HOME"));
+/// ```
+#[macro_export]
+macro_rules! unwrap_fatal {
+    ($e:expr) => {
+        match $e {
+            ::core::result::Result::Ok(v) => v,
+            ::core::result::Result::Err(e) => $crate::fatal!("{}", e),
+        }
+    };
 }
 
-impl<T, E: Display> FatalExt<T, E> for Result<T, E> {
-    #[track_caller]
-    fn unwrap_fatal(self) -> T {
-        match self {
-            Ok(value) => value,
-            Err(e) => {
-                let loc = Location::caller();
-                crate::fatal!(_filename = loc.file(), _line_number = loc.line(), "{e}")
-            }
+/// Unwrap a [`Result`](std::result::Result), or log `msg` together with the error's
+/// [`Display`](std::fmt::Display) output via [`fatal!`] and exit with code 1.
+///
+/// Expands at the call site, so the log records the caller's module, file and line.
+///
+/// # Examples
+/// ```no_run
+/// use actix_cloud::expect_fatal;
+///
+/// let home = expect_fatal!(std::env::var("HOME"), "HOME is not set");
+/// ```
+#[macro_export]
+macro_rules! expect_fatal {
+    ($e:expr, $msg:expr) => {
+        match $e {
+            ::core::result::Result::Ok(v) => v,
+            ::core::result::Result::Err(e) => $crate::fatal!("{}: {}", $msg, e),
         }
-    }
-
-    #[track_caller]
-    fn expect_fatal(self, msg: &str) -> T {
-        match self {
-            Ok(value) => value,
-            Err(e) => {
-                let loc = Location::caller();
-                crate::fatal!(
-                    _filename = loc.file(),
-                    _line_number = loc.line(),
-                    "{msg}: {e}"
-                )
-            }
-        }
-    }
+    };
 }
 
 /// One structured log entry, handed to the writers (and `filter`/`transformer`).
@@ -154,20 +136,12 @@ impl LogItem {
             .to_owned();
         let level = Level::from_str(s.get("level").and_then(Value::as_str).unwrap_or("ERROR"))
             .unwrap_or(Level::ERROR);
-        let mut filename = s
+        let filename = s
             .get("filename")
             .and_then(Value::as_str)
             .map(str::to_string);
-        let mut line_number = s.get("line_number").and_then(Value::as_i64);
+        let line_number = s.get("line_number").and_then(Value::as_i64);
         let mut fields = Self::json_take_object(&mut s, "fields");
-        // Reserved overrides, set e.g. by [`FatalExt`] to attribute the entry to its
-        // real caller. Always removed so they never reach the writers.
-        if let Some(v) = fields.remove("_filename").as_ref().and_then(Value::as_str) {
-            filename = Some(v.to_owned());
-        }
-        if let Some(v) = fields.remove("_line_number").and_then(|v| v.as_i64()) {
-            line_number = Some(v);
-        }
         let message = fields
             .remove("message")
             .unwrap_or_default()
@@ -517,6 +491,19 @@ impl LoggerBuilder {
                         .format("%F %T%.6f")
                         .to_string()
                         .into();
+                }
+
+                // Reserved location overrides, only applied when the builder option
+                // is enabled. Always removed so they never reach the writers.
+                if let Some(v) = item.fields.remove("_filename") {
+                    if self.filename {
+                        item.filename = v.as_str().map(str::to_owned);
+                    }
+                }
+                if let Some(v) = item.fields.remove("_line_number") {
+                    if self.line_number {
+                        item.line_number = v.as_i64();
+                    }
                 }
 
                 if let Some(filter) = &self.filter {

@@ -1,3 +1,10 @@
+# 0.6.6
+## Breaking changes
+1. `logger::FatalExt` is removed — `unwrap_fatal()` / `expect_fatal()` are replaced by the `unwrap_fatal!` and `expect_fatal!` macros. They expand at the call site, so the log records the caller's module, file and line instead of the logger's own location.
+
+## Changes
+1. The reserved `_filename` and `_line_number` fields are now only applied when `LoggerBuilder::filename()` / `line_number()` are enabled.
+
 # 0.6.5
 ## New
 1. Log entries support the reserved `_filename` and `_line_number` fields to override the recorded file and line, like the existing `_time` field.
