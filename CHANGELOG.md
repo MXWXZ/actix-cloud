@@ -1,3 +1,10 @@
+# 0.6.7
+## Fix
+1. `DefaultBackend` no longer rejects writes when it is below the configured capacity.
+
+## Changes
+1. Overwriting an existing key no longer triggers eviction of other entries when the database is at capacity.
+
 # 0.6.6
 ## Breaking changes
 1. `logger::FatalExt` is removed — `unwrap_fatal()` / `expect_fatal()` are replaced by the `unwrap_fatal!` and `expect_fatal!` macros. They expand at the call site, so the log records the caller's module, file and line instead of the logger's own location.

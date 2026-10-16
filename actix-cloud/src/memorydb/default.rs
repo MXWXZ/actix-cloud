@@ -128,11 +128,11 @@ impl MemoryDB for DefaultBackend {
         let mut wlock = self.data.write();
         // full
         if let Some(x) = self.capacity {
-            if x >= wlock.len()
-                && self.gc(&mut wlock, max(x / 10, 1)) == 0
+            if x <= wlock.len()
                 && wlock.get(key).is_none()
+                && self.gc(&mut wlock, max(x / 10, 1)) == 0
             {
-                bail!("Capacity is full");
+                bail!("capacity is full");
             }
         }
         wlock.insert(key.to_owned(), Data::new(value, None));
@@ -193,11 +193,11 @@ impl MemoryDB for DefaultBackend {
         let mut wlock = self.data.write();
         // full
         if let Some(x) = self.capacity {
-            if x >= wlock.len()
-                && self.gc(&mut wlock, max(x / 10, 1)) == 0
+            if x <= wlock.len()
                 && wlock.get(key).is_none()
+                && self.gc(&mut wlock, max(x / 10, 1)) == 0
             {
-                bail!("Capacity is full");
+                bail!("capacity is full");
             }
         }
         wlock.insert(key.to_owned(), Data::new(value, Some(ms.try_into()?)));
