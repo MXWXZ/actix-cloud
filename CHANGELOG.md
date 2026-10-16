@@ -1,3 +1,10 @@
+# 0.7.0
+## Breaking changes
+1. `router::Checker::check` now returns `Result<(), actix_web::Error>` instead of `Result<bool>`. Return `Ok(())` to allow the request, or an error (e.g. `ErrorUnauthorized`, `ErrorForbidden`) to reject it with that error's status code and message. The error is returned to the client as-is — the framework no longer generates 403/500 responses for failed checks.
+
+## Changes
+1. Error messages start with a lowercase letter.
+
 # 0.6.7
 ## Fix
 1. `DefaultBackend` no longer rejects writes when it is below the configured capacity.

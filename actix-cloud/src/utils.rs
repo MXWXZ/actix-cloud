@@ -85,7 +85,7 @@ pub fn load_rustls_config<P: AsRef<std::path::Path>>(
             .collect::<Result<Vec<_>, _>>()?;
 
     let Some(private_key) = key_chain.pop() else {
-        anyhow::bail!("Cannot find PKCS 8 private key");
+        anyhow::bail!("cannot find PKCS 8 private key");
     };
 
     config

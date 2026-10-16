@@ -3,9 +3,10 @@ use std::{io, rc::Rc};
 use actix_cloud::{
     actix_web::{
         dev::ServiceRequest,
+        error::ErrorForbidden,
         middleware,
         web::{get, scope},
-        App, HttpServer,
+        App, Error, HttpServer,
     },
     async_trait, build_router,
     logger::LoggerBuilder,
@@ -38,7 +39,7 @@ impl AuthChecker {
 
 #[async_trait(?Send)]
 impl Checker for AuthChecker {
-    async fn check(&self, req: &mut ServiceRequest) -> Result<bool> {
+    async fn check(&self, req: &mut ServiceRequest) -> Result<(), Error> {
         let qs = QString::from(req.query_string());
         let is_admin = if qs.get("admin").is_some_and(|x| x == "1") {
             true
@@ -46,9 +47,9 @@ impl Checker for AuthChecker {
             false
         };
         if (is_admin && self.need_admin) || !self.need_admin {
-            Ok(true)
+            Ok(())
         } else {
-            Ok(false)
+            Err(ErrorForbidden("permission denied"))
         }
     }
 }

@@ -60,11 +60,12 @@ pub fn build_router(router: Vec<Router>) -> impl FnOnce(&mut ServiceConfig) {
 
 /// Per-route permission checker.
 ///
-/// Return `Ok(false)` to reject the request with 403; an `Err` yields 500. `?Send` is
-/// required because actix runs each worker single-threaded.
+/// Return `Ok(())` to allow the request, or an `Err` (e.g. `ErrorUnauthorized` /
+/// `ErrorForbidden`) to reject it with the error's status code. `?Send` is required
+/// because actix runs each worker single-threaded.
 #[async_trait(?Send)]
 pub trait Checker {
-    async fn check(&self, req: &mut ServiceRequest) -> Result<bool>;
+    async fn check(&self, req: &mut ServiceRequest) -> Result<(), actix_web::Error>;
 }
 
 #[cfg(feature = "csrf")]
@@ -149,19 +150,9 @@ where
         req.extensions_mut().insert(self.csrf);
         Box::pin(async move {
             if let Some(checker) = checker {
-                match checker.check(&mut req).await {
-                    Ok(ok) => {
-                        if ok {
-                            srv.call(req).await
-                        } else {
-                            Err(actix_web::error::ErrorForbidden("Checker failed"))
-                        }
-                    }
-                    Err(e) => Err(actix_web::error::ErrorInternalServerError(e)),
-                }
-            } else {
-                srv.call(req).await
+                checker.check(&mut req).await?;
             }
+            srv.call(req).await
         })
     }
 }

@@ -14,7 +14,7 @@ impl TryFrom<String> for SessionKey {
 
     fn try_from(val: String) -> Result<Self, Self::Error> {
         if val.len() > 4064 {
-            bail!("The session key is bigger than 4064 bytes, the upper limit on cookie content.");
+            bail!("the session key is bigger than 4064 bytes, the upper limit on cookie content");
         }
 
         Ok(SessionKey(val))
