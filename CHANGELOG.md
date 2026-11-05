@@ -1,3 +1,7 @@
+# 0.7.2
+## Fix
+1. Fix 0.7.1 bug.
+
 # 0.7.1
 ## Changes
 1. The default color logger now shows `http.method` and `http.target` span fields; other `http.*` span fields are still filtered out.
