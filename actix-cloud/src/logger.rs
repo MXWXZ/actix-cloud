@@ -346,7 +346,10 @@ impl LoggerBuilder {
             }
         }
         for (k, v) in item.span {
-            if !k.starts_with("http.") && !k.starts_with("otel.") && k != "name" {
+            if (k.starts_with("http.") && k != "http.method" && k != "http.target")
+                || k.starts_with("otel.")
+                || k == "name"
+            {
                 buf += &format!(" span.{k}={v}").bright_black().to_string();
             }
         }
