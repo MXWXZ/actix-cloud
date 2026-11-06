@@ -282,6 +282,10 @@ pub fn flush() {
     let _ = ack_rx.recv();
 }
 
+/// Builder for the logger thread spawned by [`LoggerBuilder::start`].
+///
+/// Defaults to the colorful writer at `INFO` level without filename/line number;
+/// see the individual setters for the customization points.
 pub struct LoggerBuilder {
     json: bool,
     level: Level,
@@ -556,5 +560,94 @@ impl LoggerBuilder {
                 join: Some(join),
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_item_is_parsed_from_json() {
+        let map = serde_json::json!({
+            "target": "my::target",
+            "level": "WARN",
+            "filename": "src/main.rs",
+            "line_number": 42,
+            "fields": {
+                "message": "hello",
+                "extra": 1
+            },
+            "span": {"name": "span"}
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let item = LogItem::from_json(map);
+        assert_eq!(item.level, Level::WARN);
+        assert_eq!(item.message, "hello");
+        assert_eq!(item.target, "my::target");
+        assert_eq!(item.filename.as_deref(), Some("src/main.rs"));
+        assert_eq!(item.line_number, Some(42));
+        assert_eq!(item.fields.get("extra"), Some(&serde_json::json!(1)));
+        assert!(!item.fields.contains_key("message"));
+        assert_eq!(item.span.get("name"), Some(&serde_json::json!("span")));
+    }
+
+    #[test]
+    fn log_item_defaults_missing_fields() {
+        let item = LogItem::from_json(Map::new());
+
+        assert_eq!(item.level, Level::ERROR);
+        assert_eq!(item.message, "");
+        assert_eq!(item.target, "");
+        assert!(item.filename.is_none());
+        assert!(item.line_number.is_none());
+        assert!(item.fields.is_empty());
+        assert!(item.span.is_empty());
+    }
+
+    #[test]
+    fn fmt_level_pads_level_names() {
+        assert!(LoggerBuilder::fmt_level(&Level::INFO).contains("INFO"));
+        assert!(LoggerBuilder::fmt_level(&Level::TRACE).contains("TRACE"));
+        assert!(LoggerBuilder::fmt_level(&Level::WARN).contains("WARN"));
+        assert!(LoggerBuilder::fmt_level(&Level::ERROR).contains("ERROR"));
+    }
+
+    #[test]
+    fn builder_defaults_and_setters() {
+        let b = LoggerBuilder::new();
+        assert!(!b.json);
+        assert_eq!(b.level, Level::INFO);
+        assert!(!b.filename);
+        assert!(!b.line_number);
+        assert!(b.filter.is_none());
+        assert!(b.transformer.is_none());
+        assert!(b.handler.is_none());
+
+        let b = LoggerBuilder::new()
+            .json()
+            .level(Level::DEBUG)
+            .filename()
+            .line_number();
+        assert!(b.json);
+        assert!(b.filename);
+        assert!(b.line_number);
+        assert_eq!(b.level, Level::DEBUG);
+    }
+
+    #[test]
+    fn log_sender_forwards_json_maps() {
+        let (tx, mut rx) = unbounded_channel();
+        let mut writer = LogSender::new(tx)();
+
+        let n = std::io::Write::write(&mut writer, br#"{"level":"INFO"}"#).unwrap();
+        assert_eq!(n, 16);
+        assert!(rx.try_recv().is_ok());
+
+        // Non-JSON input is reported as a write error.
+        assert!(std::io::Write::write(&mut writer, b"not json").is_err());
     }
 }

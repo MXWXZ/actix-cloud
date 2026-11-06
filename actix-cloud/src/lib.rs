@@ -1,6 +1,20 @@
-//! Actix Cloud is an all-in-one web framework based on [Actix Web](https://crates.io/crates/actix-web).
+//! Actix Cloud is an all-in-one web framework built on
+//! [Actix Web](https://crates.io/crates/actix-web).
 //!
-//! Please refer to our [crate.io](https://crates.io/crates/actix-cloud) and [Github](https://github.com/MXWXZ/actix-cloud) for more documents.
+//! Every module is behind a cargo feature, so a binary only compiles what it uses (the
+//! `all` feature enables everything). The main pieces:
+//!
+//! - `memorydb` — object-safe key-value abstraction with in-process and Redis backends.
+//! - `router` / `csrf` — declarative routes with per-route auth checkers and CSRF.
+//! - `session` — session storage backed by `memorydb`.
+//! - `logger` — tracing-based structured logger with JSON/color writers.
+//! - `i18n` — compile-time locale loading (`i18n!`) and the `t!`/`map!` helpers.
+//! - `request` — per-request extension data (language, real IP, trace id).
+//! - `response` / `response-build` — uniform responses and build-time response enums.
+//! - `state` — `GlobalState` and the server handle.
+//!
+//! See [crates.io](https://crates.io/crates/actix-cloud) and
+//! [GitHub](https://github.com/MXWXZ/actix-cloud) for more documents.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(feature = "macros")]

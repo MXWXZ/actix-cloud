@@ -1,0 +1,6 @@
+Ok:
+  code: 0
+  message: ok
+NotFound:
+  code: 404
+  message: not_found

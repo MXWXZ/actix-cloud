@@ -62,6 +62,8 @@ pub trait ResponseCodeTrait {
     fn message(&self) -> &'static str;
 }
 
+/// Callback that mutates the underlying [`HttpResponseBuilder`] before the response
+/// is built, e.g. to insert additional headers. See [`Response::builder`].
 pub type ResponseBuilderFn = Box<dyn Fn(&mut HttpResponseBuilder)>;
 
 /// Uniform response type with business code/message/data and i18n support.
@@ -72,12 +74,18 @@ pub type ResponseBuilderFn = Box<dyn Fn(&mut HttpResponseBuilder)>;
 /// `Response<serde_json::Value>` (aka [`JsonResponse`], feature `response-json`)
 /// implements [`Responder`](actix_web::Responder) and serializes the body as JSON.
 pub struct Response<T> {
+    /// HTTP status code.
     pub http_code: StatusCode,
+    /// Business code in the response body.
     pub code: i64,
+    /// Response message (an i18n key when translation is enabled).
     pub message: String,
+    /// Optional response payload.
     pub data: Option<T>,
+    /// Callbacks applied to the [`HttpResponseBuilder`] in order.
     pub builder: Vec<ResponseBuilderFn>,
     #[cfg(feature = "i18n")]
+    /// Whether [`Self::message`] is translated through the request locale.
     pub translate: bool,
 }
 
@@ -290,5 +298,206 @@ impl actix_web::Responder for JsonResponse {
                 rsp.message_body(self.message).unwrap().map_into_left_body()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "response-json")]
+    use serde_json::json;
+
+    use actix_web::{
+        http::header, test as web_test, HttpRequest, Responder as _, ResponseError as _,
+    };
+
+    use super::*;
+
+    struct TestCode;
+
+    impl ResponseCodeTrait for TestCode {
+        fn code(&self) -> i64 {
+            42
+        }
+
+        fn message(&self) -> &'static str {
+            "test.code"
+        }
+    }
+
+    fn request() -> HttpRequest {
+        web_test::TestRequest::default().to_http_request()
+    }
+
+    /// Wrap a bare `HttpResponse` so `test::read_body` can consume it.
+    fn service_response<B>(
+        req: HttpRequest,
+        http: HttpResponse<B>,
+    ) -> actix_web::dev::ServiceResponse<B> {
+        actix_web::dev::ServiceResponse::new(req, http)
+    }
+
+    #[test]
+    fn constructors_set_defaults() {
+        let r = Response::<()>::new(TestCode);
+        assert_eq!(r.http_code, StatusCode::OK);
+        assert_eq!(r.code, 42);
+        assert_eq!(r.message, "test.code");
+        assert!(r.data.is_none());
+        assert!(r.builder.is_empty());
+        #[cfg(feature = "i18n")]
+        assert!(r.translate);
+
+        let r = Response::<()>::new_code(StatusCode::IM_A_TEAPOT);
+        assert_eq!(r.http_code, StatusCode::IM_A_TEAPOT);
+        assert_eq!(r.code, 0);
+        assert!(r.message.is_empty());
+        #[cfg(feature = "i18n")]
+        assert!(!r.translate);
+
+        assert_eq!(
+            Response::<()>::no_content().http_code,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(Response::<()>::forbidden().http_code, StatusCode::FORBIDDEN);
+        assert_eq!(Response::<()>::not_found().http_code, StatusCode::NOT_FOUND);
+
+        let r = Response::<()>::bad_request("bad");
+        assert_eq!(r.http_code, StatusCode::BAD_REQUEST);
+        assert_eq!(r.message, "bad");
+    }
+
+    #[test]
+    fn builder_callbacks_are_collected_in_order() {
+        let r = Response::<()>::new(TestCode)
+            .builder(|b| {
+                b.insert_header(("X-First", "1"));
+            })
+            .builder(|b| {
+                b.insert_header(("X-Second", "2"));
+            });
+        assert_eq!(r.builder.len(), 2);
+    }
+
+    #[cfg(feature = "response-json")]
+    #[actix_web::test]
+    async fn json_response_serializes_code_message_data() {
+        let req = request();
+        let http = JsonResponse::new(TestCode)
+            .message("hello")
+            .json(json!({"a": 1}))
+            .builder(|b| {
+                b.insert_header(("X-Extra", "1"));
+            })
+            .respond_to(&req);
+        let http = service_response(req, http);
+
+        assert_eq!(http.status(), StatusCode::OK);
+        assert_eq!(
+            http.headers()
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "application/json"
+        );
+        assert_eq!(
+            http.headers().get("X-Extra").unwrap().to_str().unwrap(),
+            "1"
+        );
+
+        let body: serde_json::Value =
+            serde_json::from_slice(&web_test::read_body(http).await).unwrap();
+        assert_eq!(
+            body,
+            json!({"code": 42, "message": "hello", "data": {"a": 1}})
+        );
+    }
+
+    #[cfg(feature = "response-json")]
+    #[actix_web::test]
+    async fn json_response_created_sets_location() {
+        let http = JsonResponse::created(TestCode, "/items/1").respond_to(&request());
+
+        assert_eq!(http.status(), StatusCode::CREATED);
+        assert_eq!(
+            http.headers()
+                .get(header::LOCATION)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "/items/1"
+        );
+    }
+
+    #[cfg(feature = "response-json")]
+    #[actix_web::test]
+    async fn json_response_no_content_has_empty_body() {
+        let req = request();
+        let http = JsonResponse::no_content().respond_to(&req);
+        let http = service_response(req, http);
+
+        assert_eq!(http.status(), StatusCode::NO_CONTENT);
+        // No JSON content type is set for an empty body.
+        assert!(http.headers().get(header::CONTENT_TYPE).is_none());
+        assert!(web_test::read_body(http).await.is_empty());
+    }
+
+    #[cfg(feature = "response-json")]
+    #[actix_web::test]
+    async fn json_response_error_returns_plain_message() {
+        // Non-success responses ignore the business code/data and send the raw message.
+        let req = request();
+        let http = JsonResponse::new_code(StatusCode::BAD_REQUEST)
+            .message("bad request")
+            .json(json!({"ignored": true}))
+            .respond_to(&req);
+        let http = service_response(req, http);
+        assert_eq!(http.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(web_test::read_body(http).await.as_ref(), b"bad request");
+
+        // An empty message produces an empty body.
+        let req = request();
+        let http = JsonResponse::new_code(StatusCode::NOT_FOUND).respond_to(&req);
+        let http = service_response(req, http);
+        assert_eq!(http.status(), StatusCode::NOT_FOUND);
+        assert!(web_test::read_body(http).await.is_empty());
+    }
+
+    #[actix_web::test]
+    async fn file_response_streams_attachment() {
+        let http = service_response(
+            request(),
+            Response::<()>::file("test.bin".to_owned(), vec![1, 2, 3]),
+        );
+
+        assert_eq!(http.status(), StatusCode::OK);
+        assert_eq!(
+            http.headers()
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "application/octet-stream"
+        );
+        assert!(http
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("filename=\"test.bin\""));
+        assert_eq!(web_test::read_body(http).await.as_ref(), &[1, 2, 3]);
+    }
+
+    #[actix_web::test]
+    async fn response_error_renders_opaque_500() {
+        let e = ResponseError::from(std::io::Error::other("secret details"));
+        assert_eq!(e.to_string(), "secret details");
+        assert_eq!(e.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let http = service_response(request(), e.error_response());
+        assert_eq!(http.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        // Error details are not leaked to the client.
+        assert!(web_test::read_body(http).await.is_empty());
     }
 }

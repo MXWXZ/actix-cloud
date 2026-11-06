@@ -99,10 +99,17 @@ impl Display for StrictTransportSecurity {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct SecurityHeader {
+    /// Value of the `Referrer-Policy` header.
     pub referer_policy: RefererPolicy,
+    /// Value of the `X-Frame-Options` header.
     pub x_frame_options: XFrameOptions,
+    /// Value of the `Cross-Origin-Opener-Policy` header.
     pub cross_origin_opener_policy: CrossOriginOpenerPolicy,
+    /// Value of the `Content-Security-Policy` header.
     pub content_security_policy: String,
+    /// Value of the `Strict-Transport-Security` header; `None` omits it.
+    ///
+    /// See [`Self::set_default_hsts`] for the recommended one-year policy.
     pub strict_transport_security: Option<StrictTransportSecurity>,
 }
 
@@ -142,5 +149,109 @@ impl SecurityHeader {
             ret = ret.add(("Strict-Transport-Security", hsts.to_string()));
         }
         ret
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use actix_web::{test as web_test, web, App, HttpResponse};
+
+    use super::*;
+
+    #[test]
+    fn header_values_are_formatted() {
+        assert_eq!(RefererPolicy::NoReferrer.to_string(), "no-referrer");
+        assert_eq!(
+            RefererPolicy::StrictOriginWhenCrossOrigin.to_string(),
+            "strict-origin-when-cross-origin"
+        );
+        assert_eq!(XFrameOptions::Deny.to_string(), "DENY");
+        assert_eq!(XFrameOptions::SameOrigin.to_string(), "SAMEORIGIN");
+        assert_eq!(
+            CrossOriginOpenerPolicy::UnsafeNone.to_string(),
+            "unsafe-none"
+        );
+        assert_eq!(
+            CrossOriginOpenerPolicy::SameOriginAllowPopups.to_string(),
+            "same-origin-allow-popups"
+        );
+        assert_eq!(
+            StrictTransportSecurity::MaxAge(60).to_string(),
+            "max-age=60"
+        );
+        assert_eq!(
+            StrictTransportSecurity::IncludeSubDomains(60).to_string(),
+            "max-age=60; includeSubDomains"
+        );
+        assert_eq!(
+            StrictTransportSecurity::Preload(60).to_string(),
+            "max-age=60; includeSubDomains; preload"
+        );
+    }
+
+    async fn headers_of(security: SecurityHeader) -> actix_web::dev::ServiceResponse {
+        let app = web_test::init_service(
+            App::new()
+                .wrap(security.build())
+                .route("/", web::get().to(|| async { HttpResponse::Ok().finish() })),
+        )
+        .await;
+        web_test::call_service(&app, web_test::TestRequest::get().uri("/").to_request()).await
+    }
+
+    #[actix_web::test]
+    async fn default_headers_are_applied() {
+        let rsp = headers_of(SecurityHeader::default()).await;
+
+        assert_eq!(
+            rsp.headers()
+                .get("X-Content-Type-Options")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "nosniff"
+        );
+        assert_eq!(
+            rsp.headers()
+                .get("Referrer-Policy")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "strict-origin-when-cross-origin"
+        );
+        assert_eq!(
+            rsp.headers()
+                .get("X-Frame-Options")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "DENY"
+        );
+        assert_eq!(
+            rsp.headers()
+                .get("Cross-Origin-Opener-Policy")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "same-origin"
+        );
+        // HSTS is opt-in.
+        assert!(rsp.headers().get("Strict-Transport-Security").is_none());
+    }
+
+    #[actix_web::test]
+    async fn default_hsts_is_opt_in() {
+        let mut security = SecurityHeader::default();
+        security.set_default_hsts();
+        let rsp = headers_of(security).await;
+
+        assert_eq!(
+            rsp.headers()
+                .get("Strict-Transport-Security")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "max-age=31536000; includeSubDomains; preload"
+        );
     }
 }

@@ -32,7 +32,9 @@ pub struct Extension {
     pub real_ip: SocketAddr,
 }
 
+/// Callback resolving the client real IP; see [`Middleware::real_ip`].
 pub type RealIPFunc = Rc<dyn Fn(&ServiceRequest) -> SocketAddr>;
+/// Callback identifying the request language; see [`Middleware::lang`].
 pub type LangFunc = Rc<dyn Fn(&ServiceRequest) -> Option<String>>;
 
 /// Middleware inserting [`Extension`] into the request extensions.
@@ -185,6 +187,8 @@ where
         {
             use futures::FutureExt;
             use std::str::FromStr;
+            // After the inner service returns, optionally mirror the trace id into
+            // a response header.
             Box::pin(self.service.call(req).map(move |x| {
                 if let Some(header) = header.as_ref() {
                     x.map(|mut x| {
@@ -199,5 +203,96 @@ where
                 }
             }))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use actix_web::{web, App, HttpRequest, HttpResponse};
+
+    use super::*;
+
+    async fn handler(
+        req: HttpRequest,
+        out: web::Data<Mutex<Option<Arc<Extension>>>>,
+    ) -> HttpResponse {
+        *out.lock().unwrap() = req.extensions().get::<Arc<Extension>>().cloned();
+        HttpResponse::Ok().finish()
+    }
+
+    /// Run one request through the middleware and return the inserted `Extension`.
+    async fn call(mw: Middleware) -> Arc<Extension> {
+        let out = web::Data::new(Mutex::new(None));
+        let app = actix_web::test::init_service(
+            App::new()
+                .wrap(mw)
+                .app_data(out.clone())
+                .route("/", web::get().to(handler)),
+        )
+        .await;
+        let rsp = actix_web::test::call_service(
+            &app,
+            actix_web::test::TestRequest::get().uri("/").to_request(),
+        )
+        .await;
+        assert!(rsp.status().is_success());
+        let ext = out.lock().unwrap().take().expect("Extension not inserted");
+        ext
+    }
+
+    #[actix_web::test]
+    async fn default_extension_values() {
+        let ext = call(Middleware::new()).await;
+
+        // Test requests have no peer address; the fallback is used.
+        assert_eq!(ext.real_ip, SocketAddr::from(([0, 0, 0, 0], 0)));
+        #[cfg(feature = "i18n")]
+        // Without `GlobalState` the language falls back to `en-US`.
+        assert_eq!(ext.lang, "en-US");
+        #[cfg(feature = "traceid")]
+        // Without `TracingLogger` there is no trace id.
+        assert_eq!(ext.trace_id, "");
+    }
+
+    #[actix_web::test]
+    async fn custom_callbacks_are_used() {
+        #[allow(unused_mut)]
+        let mw = Middleware::new().real_ip(|_| SocketAddr::from(([1, 2, 3, 4], 5678)));
+        #[cfg(feature = "i18n")]
+        let mw = mw.lang(|_| Some("zh-CN".to_owned()));
+
+        let ext = call(mw).await;
+        assert_eq!(ext.real_ip, SocketAddr::from(([1, 2, 3, 4], 5678)));
+        #[cfg(feature = "i18n")]
+        assert_eq!(ext.lang, "zh-CN");
+    }
+
+    #[cfg(feature = "traceid")]
+    #[actix_web::test]
+    async fn trace_header_is_inserted_when_configured() {
+        let app = actix_web::test::init_service(
+            App::new()
+                .wrap(Middleware::new().trace_header("X-Trace-Id"))
+                .route("/", web::get().to(handler_no_data)),
+        )
+        .await;
+        let rsp = actix_web::test::call_service(
+            &app,
+            actix_web::test::TestRequest::get().uri("/").to_request(),
+        )
+        .await;
+        assert!(rsp.status().is_success());
+        // Without `TracingLogger` the id is empty, but the header is still present.
+        assert_eq!(
+            rsp.headers().get("X-Trace-Id").unwrap().to_str().unwrap(),
+            ""
+        );
+    }
+
+    #[cfg(feature = "traceid")]
+    async fn handler_no_data(_: HttpRequest) -> HttpResponse {
+        HttpResponse::Ok().finish()
     }
 }

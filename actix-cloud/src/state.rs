@@ -63,7 +63,8 @@ impl ServerHandle {
 
     /// Sends stop signal through contained server handle.
     ///
-    /// Does nothing if [`Self::start`] has never completed.
+    /// `running`/`stop_time` are always updated; the server signal is only sent when
+    /// [`Self::start`] has been called.
     pub fn stop(&self, graceful: bool) {
         *self.running.write() = false;
         *self.stop_time.write() = Some(Utc::now());
@@ -71,5 +72,43 @@ impl ServerHandle {
             #[allow(clippy::let_underscore_future)]
             let _ = handle.stop(graceful);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(server: ServerHandle) -> GlobalState {
+        GlobalState {
+            #[cfg(feature = "memorydb")]
+            memorydb: std::sync::Arc::new(crate::memorydb::default::DefaultBackend::new(None)),
+            #[cfg(feature = "config")]
+            config: config::Config::default(),
+            #[cfg(feature = "logger")]
+            logger: None,
+            #[cfg(feature = "i18n")]
+            locale: crate::i18n::Locale::new("en-US"),
+            server,
+        }
+    }
+
+    #[test]
+    fn server_handle_defaults_and_stop() {
+        let handle = ServerHandle::default();
+        assert!(!*handle.running.read());
+        assert_eq!(*handle.start_time.read(), DateTime::<Utc>::default());
+        assert!(handle.stop_time.read().is_none());
+
+        // Stopping without a started server only updates the state.
+        handle.stop(true);
+        assert!(!*handle.running.read());
+        assert!(handle.stop_time.read().is_some());
+    }
+
+    #[test]
+    fn build_wraps_state_in_data() {
+        let data = state(ServerHandle::default()).build();
+        assert!(!*data.server.running.read());
     }
 }

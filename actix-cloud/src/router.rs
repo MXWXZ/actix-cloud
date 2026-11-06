@@ -110,10 +110,16 @@ pub trait Checker {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, enum_as_inner::EnumAsInner)]
 pub enum CSRFType {
+    /// Check the token in the configured header on unsafe methods only.
     Header,
+    /// Like [`CSRFType::Header`], but also accepts the token as a query parameter
+    /// (generally only for websocket).
     Param,
+    /// Like [`CSRFType::Header`], but safe methods are checked too.
     ForceHeader,
+    /// Like [`CSRFType::Param`], but safe methods are checked too.
     ForceParam,
+    /// Never check CSRF for this route.
     Disabled,
 }
 
@@ -221,24 +227,61 @@ mod tests {
             }),
         )));
         let app = test::init_service(app).await;
-        test::call_service(&app, req.to_request()).await
+        // Render middleware/handler errors into their HTTP response instead of
+        // panicking, so rejection paths can assert on the status code.
+        match test::try_call_service(&app, req.to_request()).await {
+            Ok(rsp) => rsp,
+            Err(err) => ServiceResponse::new(
+                test::TestRequest::default().to_http_request(),
+                actix_web::ResponseError::error_response(err.as_response_error()),
+            ),
+        }
     }
 
     fn get_and_post() -> Vec<Router> {
         vec![
-            router("/hello", web::get().to(|| async { HttpResponse::Ok() })),
             router(
                 "/hello",
-                web::post().to(|| async { HttpResponse::Created() }),
+                web::get().to(|| async { HttpResponse::Ok().finish() }),
+            ),
+            router(
+                "/hello",
+                web::post().to(|| async { HttpResponse::Created().finish() }),
             ),
         ]
+    }
+
+    struct Reject;
+
+    #[async_trait(?Send)]
+    impl Checker for Reject {
+        async fn check(&self, _req: &mut ServiceRequest) -> Result<(), actix_web::Error> {
+            Err(actix_web::error::ErrorUnauthorized("nope"))
+        }
+    }
+
+    #[actix_web::test]
+    async fn checker_can_reject_request() {
+        let routers = vec![Router {
+            path: "/hello".to_owned(),
+            route: web::get().to(|| async { HttpResponse::Ok().finish() }),
+            checker: Some(Rc::new(Reject)),
+            #[cfg(feature = "csrf")]
+            csrf: CSRFType::Disabled,
+        }];
+        let resp = call(
+            routers,
+            actix_web::test::TestRequest::get().uri("/api/hello"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[actix_web::test]
     async fn wrong_method_returns_405() {
         let routers = vec![router(
             "/hello",
-            web::post().to(|| async { HttpResponse::Ok() }),
+            web::post().to(|| async { HttpResponse::Ok().finish() }),
         )];
         let resp = call(routers, test::TestRequest::get().uri("/api/hello")).await;
         assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);

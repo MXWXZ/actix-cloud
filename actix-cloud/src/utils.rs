@@ -22,7 +22,7 @@ where
     iter.into_iter().all(move |x| uniq.insert(x))
 }
 
-/// Check whether `t` type `T` is equal to default.
+/// Check whether `t` equals the default value of `T`.
 pub fn is_default<T: Default + PartialEq>(t: &T) -> bool {
     *t == Default::default()
 }
@@ -55,9 +55,9 @@ pub fn rand_string_all(n: usize) -> String {
         .collect()
 }
 
-/// Restart the program and keep the argument.
+/// Restart the current program with the same command line arguments.
 ///
-/// Inherit the environment/io/working directory of current process.
+/// Inherits the environment, stdio and working directory of the current process.
 pub fn restart() -> Result<Child> {
     Command::new(env::current_exe()?)
         .args(env::args().skip(1))
@@ -144,6 +144,6 @@ mod tests {
     #[test]
     fn test_rand_string_all() {
         let s = rand_string_all(4000);
-        assert!(s.chars().all(|c| ('!'..='~').contains(&c)),);
+        assert!(s.chars().all(|c| ('!'..='~').contains(&c)));
     }
 }

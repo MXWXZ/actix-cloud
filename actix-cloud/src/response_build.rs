@@ -48,7 +48,19 @@ pub enum BuildError {
 /// generate_response("", "response", "response.rs").unwrap();
 /// ```
 pub fn generate_response(import_prefix: &str, input: &str, output: &str) -> Result<()> {
-    let outfile = Path::new(&env::var("OUT_DIR")?).join(output);
+    let out_dir = env::var("OUT_DIR")?;
+    generate_response_in(Path::new(&out_dir), import_prefix, input, output)
+}
+
+/// Implementation of [`generate_response`] with an explicit output directory, kept
+/// separate so it can be unit tested without a build script environment.
+fn generate_response_in(
+    out_dir: &Path,
+    import_prefix: &str,
+    input: &str,
+    output: &str,
+) -> Result<()> {
+    let outfile = out_dir.join(output);
     let mut output = File::create(&outfile)?;
     writeln!(
         output,
@@ -124,4 +136,74 @@ pub fn generate_response(import_prefix: &str, input: &str, output: &str) -> Resu
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    /// Path of a fixture directory under `tests/response`.
+    fn fixture(name: &str) -> String {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/response")
+            .join(name)
+            .display()
+            .to_string()
+    }
+
+    /// Unique temporary output directory.
+    fn temp_dir() -> std::path::PathBuf {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let dir = env::temp_dir().join(format!(
+            "actix-cloud-response-build-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn generates_enums_from_yaml_files() {
+        let out_dir = temp_dir();
+        generate_response_in(&out_dir, "crate::", &fixture("valid"), "response.rs").unwrap();
+
+        let generated = read_to_string(out_dir.join("response.rs")).unwrap();
+        std::fs::remove_dir_all(&out_dir).unwrap();
+
+        assert!(generated.contains("use crate::actix_cloud::response::ResponseCodeTrait;"));
+        assert!(generated.contains("pub enum GeneralResponse"));
+        assert!(generated.contains("GeneralResponse::Ok => 0"));
+        assert!(generated.contains("GeneralResponse::NotFound => 404"));
+        assert!(generated.contains(r#"GeneralResponse::Ok => "ok""#));
+        assert!(generated.contains(r#"GeneralResponse::NotFound => "not_found""#));
+    }
+
+    #[test]
+    fn rejects_invalid_yaml_shape() {
+        let out_dir = temp_dir();
+        let err =
+            generate_response_in(&out_dir, "", &fixture("invalid_format"), "out.rs").unwrap_err();
+        std::fs::remove_dir_all(&out_dir).unwrap();
+
+        assert!(matches!(
+            err.downcast_ref::<BuildError>(),
+            Some(BuildError::Format)
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_file_stem() {
+        let out_dir = temp_dir();
+        let err =
+            generate_response_in(&out_dir, "", &fixture("invalid_name"), "out.rs").unwrap_err();
+        std::fs::remove_dir_all(&out_dir).unwrap();
+
+        assert!(matches!(
+            err.downcast_ref::<BuildError>(),
+            Some(BuildError::File)
+        ));
+    }
 }

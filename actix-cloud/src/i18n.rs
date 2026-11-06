@@ -2,12 +2,16 @@ use std::collections::BTreeMap;
 
 pub use actix_cloud_codegen::i18n;
 
-/// Get I18n text
+/// Get I18n text.
+///
+/// Without a locale argument the default locale of the [`Locale`] is used. Variables
+/// are substituted for `%{name}` placeholders in the translated text; the same name
+/// may be supplied for either the default locale or an explicit locale.
 ///
 /// ```no_run
 /// use actix_cloud::{i18n::{i18n, Locale},t};
 ///
-/// let mut locale = Locale::new("en-US").add_locale(i18n!("locale"));
+/// let locale = Locale::new("en-US").add_locale(i18n!("locale"));
 ///
 /// // Get default locale's text
 /// t!(locale, "greeting");
@@ -51,11 +55,14 @@ macro_rules! t {
 
 /// Make map creation easier.
 ///
+/// Builds a [`std::collections::BTreeMap`]. At least one key-value pair is required.
+///
 /// # Examples
 ///
 /// ```
 /// use actix_cloud::map;
 /// let val = map!{"key" => "value"};
+/// assert_eq!(val.get("key"), Some(&"value"));
 /// ```
 #[macro_export]
 macro_rules! map {
@@ -112,5 +119,66 @@ impl Locale {
             },
             ToString::to_string,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn locale() -> Locale {
+        Locale::new("en-US").add_locale(crate::map! {
+            "en-US.greeting" => "Hello",
+            "en-US.welcome" => "Hello, %{name}!",
+            "zh-CN.greeting" => "你好",
+            "zh-CN.only_zh" => "只有中文"
+        })
+    }
+
+    #[test]
+    fn translate_falls_back_to_default_then_key() {
+        let locale = locale();
+
+        assert_eq!(locale.translate("en-US", "greeting"), "Hello");
+        assert_eq!(locale.translate("zh-CN", "greeting"), "你好");
+
+        // Unknown locale falls back to the default locale.
+        assert_eq!(locale.translate("de-DE", "greeting"), "Hello");
+        // Known locale missing the key also falls back to the default locale.
+        assert_eq!(locale.translate("zh-CN", "welcome"), "Hello, %{name}!");
+        // Missing in the default locale falls back to the key itself.
+        assert_eq!(locale.translate("en-US", "missing"), "missing");
+    }
+
+    #[test]
+    fn t_macro_uses_default_or_explicit_locale() {
+        let locale = locale();
+
+        assert_eq!(crate::t!(locale, "greeting"), "Hello");
+        assert_eq!(crate::t!(locale, "greeting", "zh-CN"), "你好");
+        assert_eq!(crate::t!(locale, "missing"), "missing");
+    }
+
+    #[test]
+    fn t_macro_substitutes_variables() {
+        let locale = locale();
+
+        assert_eq!(
+            crate::t!(locale, "welcome", name = "Jason"),
+            "Hello, Jason!"
+        );
+        assert_eq!(
+            crate::t!(locale, "welcome", "en-US", name = "Jason"),
+            "Hello, Jason!"
+        );
+        // Unknown placeholders are left untouched.
+        assert_eq!(crate::t!(locale, "welcome", other = "x"), "Hello, %{name}!");
+    }
+
+    #[test]
+    fn map_macro_builds_sorted_map() {
+        let m = crate::map! {"b" => 2, "a" => 1};
+        assert_eq!(m.keys().copied().collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(m["a"], 1);
     }
 }

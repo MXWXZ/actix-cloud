@@ -90,6 +90,8 @@ where
     F: Fn(HttpRequest, String) -> Fut + 'static,
     Fut: Future<Output = Result<bool, actix_web::Error>>,
 {
+    /// Read a single, non-empty header value; `None` when the header is missing,
+    /// empty, duplicated (to avoid smuggling), or not valid unicode.
     fn get_safe_header(req: &ServiceRequest, name: &str) -> Option<String> {
         let mut values = req
             .headers()
@@ -104,6 +106,8 @@ where
         Some(ret.to_owned())
     }
 
+    /// Double-submit check: cookie and header (or query parameter) must both be
+    /// present, equal, and accepted by the extra `checker` callback.
     async fn check_csrf(
         req: &ServiceRequest,
         cookie: &str,
@@ -164,5 +168,210 @@ where
             }
             srv.call(req).await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    use actix_web::{
+        cookie::Cookie,
+        http::{Method, StatusCode},
+        web, App, HttpResponse,
+    };
+
+    use super::*;
+    use crate::router::{build_router, Router};
+
+    fn router(method: Method, csrf: CSRFType) -> Router {
+        Router {
+            path: "/test".to_owned(),
+            route: web::route()
+                .method(method)
+                .to(|| async { HttpResponse::Ok().finish() }),
+            checker: None,
+            csrf,
+        }
+    }
+
+    fn get_and_post(csrf: CSRFType) -> Vec<Router> {
+        vec![router(Method::GET, csrf), router(Method::POST, csrf)]
+    }
+
+    fn checked() -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(false))
+    }
+
+    fn cookie() -> Cookie<'static> {
+        Cookie::new("_csrf", "token")
+    }
+
+    /// Run `req` through a scope configured with `build_router` and a CSRF middleware
+    /// whose extra checker records the call into `checked` and accepts the `token`
+    /// value only when `checker_ok` is set. Returns the response status code; errors
+    /// raised by the middleware are rendered into their HTTP status.
+    async fn call(
+        routers: Vec<Router>,
+        checker_ok: bool,
+        checked: Arc<AtomicBool>,
+        req: actix_web::test::TestRequest,
+    ) -> StatusCode {
+        let mw = Middleware::new("_csrf".to_owned(), "x-csrf".to_owned(), move |_, token| {
+            checked.store(true, Ordering::SeqCst);
+            std::future::ready(Ok::<_, actix_web::Error>(checker_ok && token == "token"))
+        });
+        let app = actix_web::test::init_service(
+            App::new().service(web::scope("/api").configure(build_router(routers, mw))),
+        )
+        .await;
+        match actix_web::test::try_call_service(&app, req.to_request()).await {
+            Ok(rsp) => rsp.status(),
+            Err(err) => err.as_response_error().error_response().status(),
+        }
+    }
+
+    #[actix_web::test]
+    async fn unsafe_method_without_token_is_rejected() {
+        let flag = checked();
+        let rsp = call(
+            get_and_post(CSRFType::Header),
+            true,
+            flag.clone(),
+            actix_web::test::TestRequest::post().uri("/api/test"),
+        )
+        .await;
+        assert_eq!(rsp, StatusCode::BAD_REQUEST);
+        // The checker is not even invoked when cookie/header are missing.
+        assert!(!flag.load(Ordering::SeqCst));
+    }
+
+    #[actix_web::test]
+    async fn matching_token_passes() {
+        let flag = checked();
+        let rsp = call(
+            get_and_post(CSRFType::Header),
+            true,
+            flag.clone(),
+            actix_web::test::TestRequest::post()
+                .uri("/api/test")
+                .cookie(cookie())
+                .insert_header(("x-csrf", "token")),
+        )
+        .await;
+        assert_eq!(rsp, StatusCode::OK);
+        assert!(flag.load(Ordering::SeqCst));
+    }
+
+    #[actix_web::test]
+    async fn mismatched_token_is_rejected() {
+        let flag = checked();
+        let rsp = call(
+            get_and_post(CSRFType::Header),
+            true,
+            flag.clone(),
+            actix_web::test::TestRequest::post()
+                .uri("/api/test")
+                .cookie(cookie())
+                .insert_header(("x-csrf", "other")),
+        )
+        .await;
+        assert_eq!(rsp, StatusCode::BAD_REQUEST);
+        assert!(!flag.load(Ordering::SeqCst));
+    }
+
+    #[actix_web::test]
+    async fn duplicated_header_is_rejected() {
+        let flag = checked();
+        let rsp = call(
+            get_and_post(CSRFType::Header),
+            true,
+            flag.clone(),
+            actix_web::test::TestRequest::post()
+                .uri("/api/test")
+                .cookie(cookie())
+                .append_header(("x-csrf", "token"))
+                .append_header(("x-csrf", "token")),
+        )
+        .await;
+        assert_eq!(rsp, StatusCode::BAD_REQUEST);
+        assert!(!flag.load(Ordering::SeqCst));
+    }
+
+    #[actix_web::test]
+    async fn checker_can_reject_valid_token() {
+        let flag = checked();
+        let rsp = call(
+            get_and_post(CSRFType::Header),
+            false,
+            flag.clone(),
+            actix_web::test::TestRequest::post()
+                .uri("/api/test")
+                .cookie(cookie())
+                .insert_header(("x-csrf", "token")),
+        )
+        .await;
+        assert_eq!(rsp, StatusCode::BAD_REQUEST);
+        assert!(flag.load(Ordering::SeqCst));
+    }
+
+    #[actix_web::test]
+    async fn safe_method_is_not_checked() {
+        let flag = checked();
+        let rsp = call(
+            get_and_post(CSRFType::Header),
+            true,
+            flag.clone(),
+            actix_web::test::TestRequest::get().uri("/api/test"),
+        )
+        .await;
+        assert_eq!(rsp, StatusCode::OK);
+        assert!(!flag.load(Ordering::SeqCst));
+    }
+
+    #[actix_web::test]
+    async fn force_header_checks_safe_methods() {
+        let flag = checked();
+        let rsp = call(
+            get_and_post(CSRFType::ForceHeader),
+            true,
+            flag.clone(),
+            actix_web::test::TestRequest::get().uri("/api/test"),
+        )
+        .await;
+        assert_eq!(rsp, StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn param_mode_accepts_query_token() {
+        let flag = checked();
+        let rsp = call(
+            get_and_post(CSRFType::Param),
+            true,
+            flag.clone(),
+            actix_web::test::TestRequest::post()
+                .uri("/api/test?x-csrf=token")
+                .cookie(cookie()),
+        )
+        .await;
+        assert_eq!(rsp, StatusCode::OK);
+        assert!(flag.load(Ordering::SeqCst));
+    }
+
+    #[actix_web::test]
+    async fn disabled_never_checks() {
+        let flag = checked();
+        let rsp = call(
+            get_and_post(CSRFType::Disabled),
+            true,
+            flag.clone(),
+            actix_web::test::TestRequest::post().uri("/api/test"),
+        )
+        .await;
+        assert_eq!(rsp, StatusCode::OK);
+        assert!(!flag.load(Ordering::SeqCst));
     }
 }
