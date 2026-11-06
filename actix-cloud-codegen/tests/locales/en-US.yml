@@ -1,0 +1,3 @@
+hello: Hello
+messages:
+  greet: "Hello, %{name}!"
