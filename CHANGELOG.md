@@ -1,3 +1,11 @@
+# 0.7.3
+## Fix
+1. `build_router` now registers all routes for the same path on a single resource, so a request with an unregistered method returns 405 Method Not Allowed (with an `Allow` header) instead of 404 Not Found.
+2. `DefaultBackend::del`/`dels` now treat expired keys as non-existent — `del` returns `false` and `dels` does not count them — matching Redis semantics.
+
+## Changes
+1. Documentation improvements and unit tests across the crate.
+
 # 0.7.2
 ## Fix
 1. Fix 0.7.1 bug.

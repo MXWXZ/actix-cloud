@@ -2,7 +2,7 @@
 //!
 //! Values are stored as Redis strings and TTLs use Redis' millisecond expiration
 //! commands, so the semantics match the other backends. The connection is managed by
-//! a [`ConnectionManager`], which reconnects automatically.
+//! a `redis::aio::ConnectionManager`, which reconnects automatically.
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -13,8 +13,8 @@ use crate::Result;
 
 /// Redis memory database backend.
 ///
-/// Uses a [`ConnectionManager`](redis::aio::ConnectionManager), which reconnects to
-/// Redis automatically, so the backend can be cloned and shared freely.
+/// Uses a `redis::aio::ConnectionManager`, which reconnects to Redis automatically,
+/// so the backend can be cloned and shared freely.
 #[derive(Clone)]
 pub struct RedisBackend {
     client: ConnectionManager,
