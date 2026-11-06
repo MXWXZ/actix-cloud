@@ -13,6 +13,7 @@ use std::{
 use actix_web::HttpMessage;
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
+    web,
     web::ServiceConfig,
     Route,
 };
@@ -32,17 +33,20 @@ where
     Fut: futures::Future<Output = Result<bool, actix_web::Error>>,
 {
     move |cfg| {
-        for i in router {
-            if !i.path.is_empty() {
-                cfg.route(
-                    &i.path,
-                    i.route.wrap(csrf.clone()).wrap(RouterGuard {
+        configure_routes(
+            cfg,
+            router
+                .into_iter()
+                .filter(|i| !i.path.is_empty())
+                .map(|i| {
+                    let route = i.route.wrap(csrf.clone()).wrap(RouterGuard {
                         checker: i.checker,
                         csrf: i.csrf,
-                    }),
-                );
-            }
-        }
+                    });
+                    (i.path, route)
+                })
+                .collect(),
+        );
     }
 }
 
@@ -50,11 +54,41 @@ where
 /// Configure routes on a scope, wrapping each route with the auth guard.
 pub fn build_router(router: Vec<Router>) -> impl FnOnce(&mut ServiceConfig) {
     |cfg| {
-        for i in router {
-            if !i.path.is_empty() {
-                cfg.route(&i.path, i.route.wrap(RouterGuard { checker: i.checker }));
-            }
+        configure_routes(
+            cfg,
+            router
+                .into_iter()
+                .filter(|i| !i.path.is_empty())
+                .map(|i| {
+                    let route = i.route.wrap(RouterGuard { checker: i.checker });
+                    (i.path, route)
+                })
+                .collect(),
+        );
+    }
+}
+
+/// Register all routes for the same path on one [`actix_web::Resource`].
+///
+/// [`ServiceConfig::route`] moves a route's guards (including its method guard) up to
+/// the resource, so registering each route separately makes a wrong-method request
+/// miss the resource entirely and return 404. Keeping the routes on a single resource
+/// lets it match on path only and fall back to 405 when no route's method matches.
+fn configure_routes(cfg: &mut ServiceConfig, routes: Vec<(String, Route)>) {
+    let mut resources: Vec<(String, Vec<Route>)> = Vec::new();
+    for (path, route) in routes {
+        if let Some((_, routes)) = resources.iter_mut().find(|(p, _)| *p == path) {
+            routes.push(route);
+        } else {
+            resources.push((path, vec![route]));
         }
+    }
+    for (path, routes) in resources {
+        cfg.service(
+            routes
+                .into_iter()
+                .fold(web::resource(path), |resource, route| resource.route(route)),
+        );
     }
 }
 
@@ -154,5 +188,83 @@ where
             }
             srv.call(req).await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use actix_web::{
+        http::{header, StatusCode},
+        test, web, App, HttpResponse,
+    };
+
+    use super::*;
+
+    fn router(path: &str, route: Route) -> Router {
+        Router {
+            path: path.to_owned(),
+            route,
+            checker: None,
+            #[cfg(feature = "csrf")]
+            csrf: CSRFType::Disabled,
+        }
+    }
+
+    async fn call(routers: Vec<Router>, req: test::TestRequest) -> ServiceResponse {
+        #[cfg(not(feature = "csrf"))]
+        let app = App::new().service(web::scope("/api").configure(build_router(routers)));
+        #[cfg(feature = "csrf")]
+        let app = App::new().service(web::scope("/api").configure(build_router(
+            routers,
+            crate::csrf::Middleware::new("_csrf".to_owned(), "x-csrf".to_owned(), |_, _| async {
+                Ok::<_, actix_web::Error>(true)
+            }),
+        )));
+        let app = test::init_service(app).await;
+        test::call_service(&app, req.to_request()).await
+    }
+
+    fn get_and_post() -> Vec<Router> {
+        vec![
+            router("/hello", web::get().to(|| async { HttpResponse::Ok() })),
+            router(
+                "/hello",
+                web::post().to(|| async { HttpResponse::Created() }),
+            ),
+        ]
+    }
+
+    #[actix_web::test]
+    async fn wrong_method_returns_405() {
+        let routers = vec![router(
+            "/hello",
+            web::post().to(|| async { HttpResponse::Ok() }),
+        )];
+        let resp = call(routers, test::TestRequest::get().uri("/api/hello")).await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(
+            resp.headers()
+                .get(header::ALLOW)
+                .and_then(|v| v.to_str().ok()),
+            Some("POST")
+        );
+    }
+
+    #[actix_web::test]
+    async fn all_methods_on_same_path_are_registered() {
+        let resp = call(get_and_post(), test::TestRequest::get().uri("/api/hello")).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = call(get_and_post(), test::TestRequest::post().uri("/api/hello")).await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let resp = call(get_and_post(), test::TestRequest::put().uri("/api/hello")).await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(
+            resp.headers()
+                .get(header::ALLOW)
+                .and_then(|v| v.to_str().ok()),
+            Some("GET, POST")
+        );
     }
 }
