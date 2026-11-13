@@ -2,3 +2,10 @@
 members = ["actix-cloud", "actix-cloud-codegen"]
 resolver = "2"
 exclude = ["examples"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.89"
+authors = ["MXWXZ <matrixwxz@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/MXWXZ/actix-cloud"

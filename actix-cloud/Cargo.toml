@@ -1,12 +1,13 @@
 [package]
 name = "actix-cloud"
 version = "0.7.3"
-edition = "2021"
-authors = ["MXWXZ <matrixwxz@gmail.com>"]
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
 description = "Actix Cloud is an all-in-one web framework based on Actix Web."
-license = "MIT"
+license.workspace = true
 readme = "../README.md"
-repository = "https://github.com/MXWXZ/actix-cloud"
+repository.workspace = true
 keywords = ["http", "web", "framework", "async", "actix"]
 categories = [
     "network-programming",
@@ -31,28 +32,11 @@ default = [
     "security",
     "response-json",
 ]
-all = [
-    "utils",
-    "rustls",
-    "macros",
-    "config-yaml",
-    "config-json",
-    "config-toml",
-    "logger",
-    "i18n",
-    "redis",
-    "request",
-    "traceid",
-    "state",
-    "session",
-    "csrf",
-    "security",
-    "response-json",
-]
+all = ["default", "config-json", "config-toml", "redis"]
 
 utils = ["dep:rand", "dep:hex"]
 rustls = [
-    "actix-web/rustls-0_23",
+    "actix-web?/rustls-0_23",
     "dep:rustls",
     "dep:rustls-pemfile",
     "dep:thiserror",
@@ -104,7 +88,7 @@ memorydb = [
     "dep:thiserror",
 ]
 config = ["dep:config"]
-serde = ["dep:serde", "dep:serde_json", "dep:serde_with"]
+serde = ["dep:serde", "dep:serde_json", "dep:serde_with", "chrono?/serde"]
 actix-web = ["dep:actix-web"]
 async-trait = ["dep:async-trait"]
 chrono = ["dep:chrono"]
@@ -114,6 +98,8 @@ tokio = ["dep:tokio"]
 # utils
 rand = { version = "0.10.3", optional = true }
 hex = { version = "0.4.3", optional = true }
+
+# errors
 thiserror = { version = "2.0.21", optional = true }
 
 # rustls
@@ -124,7 +110,7 @@ rustls-pemfile = { version = "2.2.0", optional = true }
 actix-cloud-codegen = { version = "0.3", path = "../actix-cloud-codegen", optional = true }
 
 # config
-config = { version = "0.15.27", optional = true }
+config = { version = "0.15.27", optional = true, default-features = false }
 
 # logger
 tracing = { version = "0.1.44", optional = true }
@@ -145,10 +131,12 @@ actix-web = { version = "4.19.0", features = [
 
 # memorydb
 glob = { version = "0.3.4", optional = true }
-parking_lot = { version = "0.13.0", optional = true }
+# Pinned to the version already pulled in by tokio (via actix-web) and tracing-subscriber.
+# 0.13 would compile a second copy and requires Rust 1.95.
+parking_lot = { version = "0.12.5", optional = true }
 
 # chrono
-chrono = { version = "0.4.45", features = ["serde"], optional = true }
+chrono = { version = "0.4.45", optional = true }
 
 # async-trait
 async-trait = { version = "0.1.92", optional = true }
@@ -159,14 +147,15 @@ serde_json = { version = "1.0.154", optional = true }
 serde_with = { version = "3.24.0", optional = true }
 
 # redis
-redis = { version = "1.8.1", features = [
+redis = { version = "1.8.1", default-features = false, features = [
     "tokio-rustls-comp",
     "connection-manager",
 ], optional = true }
 
 # build
 walkdir = { version = "2.5.0", optional = true }
-yaml-rust2 = { version = "0.13.0", optional = true }
+# Pinned to the version config 0.15 depends on; 0.13 would compile a second copy.
+yaml-rust2 = { version = "0.11.1", optional = true }
 quote = { version = "1.0.47", optional = true }
 syn = { version = "3.0.10", optional = true }
 prettyplease = { version = "0.3.0", optional = true }
@@ -182,5 +171,5 @@ enum-as-inner = { version = "0.7.0", optional = true }
 tokio = { version = "1.54.1", features = ["full"] }
 
 [package.metadata.docs.rs]
-all-features = true
+features = ["all"]
 rustdoc-args = ["--cfg", "docsrs"]
