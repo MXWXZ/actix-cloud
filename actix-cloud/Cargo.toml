@@ -75,13 +75,7 @@ redis = ["dep:redis", "memorydb"]
 request = ["actix-web", "dep:futures", "chrono"]
 traceid = ["dep:tracing-actix-web"]
 state = ["actix-web", "chrono", "dep:parking_lot"]
-session = [
-    "serde",
-    "memorydb",
-    "actix-web",
-    "dep:rand",
-    "dep:thiserror",
-]
+session = ["serde", "memorydb", "actix-web", "dep:rand", "dep:thiserror"]
 csrf = [
     "dep:qstring",
     "dep:enum-as-inner",
@@ -91,7 +85,6 @@ csrf = [
 ]
 security = ["actix-web"]
 response-build = [
-    "dep:anyhow",
     "dep:thiserror",
     "dep:walkdir",
     "dep:yaml-rust2",
@@ -119,73 +112,74 @@ tokio = ["dep:tokio"]
 
 [dependencies]
 # utils
-rand = { version = "0.10", optional = true }
-anyhow = { version = "1.0", optional = true }
-hex = { version = "0.4", optional = true }
-thiserror = { version = "2.0", optional = true }
+rand = { version = "0.10.3", optional = true }
+hex = { version = "0.4.3", optional = true }
+thiserror = { version = "2.0.21", optional = true }
 
 # rustls
-rustls = { version = "0.23", optional = true }
-rustls-pemfile = { version = "2.2", optional = true }
+rustls = { version = "0.23.46", optional = true }
+rustls-pemfile = { version = "2.2.0", optional = true }
 
 # macros
 actix-cloud-codegen = { version = "0.3", path = "../actix-cloud-codegen", optional = true }
 
 # config
-config = { version = "0.15", optional = true }
+config = { version = "0.15.27", optional = true }
 
 # logger
-tracing = { version = "0.1", optional = true }
-tracing-subscriber = { version = "0.3", features = [
+tracing = { version = "0.1.44", optional = true }
+tracing-subscriber = { version = "0.3.23", features = [
     "json",
     "parking_lot",
 ], optional = true }
-colored = { version = "3.1", optional = true }
-futures = { version = "0.3", optional = true }
+colored = { version = "3.1.1", optional = true }
+futures = { version = "0.3.34", optional = true }
 
 # tokio
-tokio = { version = "1", features = ["full"], optional = true }
+tokio = { version = "1.54.1", features = ["full"], optional = true }
 
 # actix-web
-actix-web = { version = "4", features = ["secure-cookies"], optional = true }
+actix-web = { version = "4.19.0", features = [
+    "secure-cookies",
+], optional = true }
 
 # memorydb
-glob = { version = "0.3", optional = true }
-parking_lot = { version = "0.12", optional = true }
+glob = { version = "0.3.4", optional = true }
+parking_lot = { version = "0.13.0", optional = true }
 
 # chrono
-chrono = { version = "0.4", features = ["serde"], optional = true }
+chrono = { version = "0.4.45", features = ["serde"], optional = true }
 
 # async-trait
-async-trait = { version = "0.1", optional = true }
+async-trait = { version = "0.1.92", optional = true }
 
 # serde
-serde = { version = "1.0", features = ["derive"], optional = true }
-serde_json = { version = "1.0", optional = true }
-serde_with = { version = "3.22", optional = true }
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+serde_json = { version = "1.0.154", optional = true }
+serde_with = { version = "3.24.0", optional = true }
 
 # redis
-redis = { version = "1.6", features = [
+redis = { version = "1.8.1", features = [
     "tokio-rustls-comp",
     "connection-manager",
 ], optional = true }
 
 # build
-walkdir = { version = "2.5", optional = true }
-yaml-rust2 = { version = "0.12", optional = true }
-quote = { version = "1.0", optional = true }
-syn = { version = "3.0", optional = true }
-prettyplease = { version = "0.3", optional = true }
+walkdir = { version = "2.5.0", optional = true }
+yaml-rust2 = { version = "0.13.0", optional = true }
+quote = { version = "1.0.47", optional = true }
+syn = { version = "3.0.10", optional = true }
+prettyplease = { version = "0.3.0", optional = true }
 
 # traceid
-tracing-actix-web = { version = "0.7", optional = true }
+tracing-actix-web = { version = "0.7.26", optional = true }
 
 # csrf
-qstring = { version = "0.7", optional = true }
-enum-as-inner = { version = "0.7", optional = true }
+qstring = { version = "0.7.2", optional = true }
+enum-as-inner = { version = "0.7.0", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.54.1", features = ["full"] }
 
 [package.metadata.docs.rs]
 all-features = true

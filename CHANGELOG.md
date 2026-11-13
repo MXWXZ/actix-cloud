@@ -1,7 +1,7 @@
 # 0.8.0
 ## Breaking changes
 1. `DefaultBackend::new()` no longer takes a capacity argument. Configure limits with the chainable builders instead: `DefaultBackend::new().max_entries(Some(n))`. `DefaultBackend::new()` and `DefaultBackend::default()` are unbounded.
-2. `actix_cloud::{Error, Result, bail}` re-exports and the `anyhow` feature are removed; use standard error types or your own. `response-build` still uses `anyhow` internally.
+2. `actix_cloud::{Error, Result, bail}` re-exports and the `anyhow` feature are removed; use standard error types or your own. `response-build` no longer depends on `anyhow` either: `response_build::generate_response` returns `Result<(), response_build::BuildError>`.
 3. `MemoryDB` methods return `Result<_, memorydb::MemoryDBError>`. Limit failures are typed (`MaxEntriesExceeded` / `MaxBytesExceeded` / `EntryTooLarge`), and `keys` reports invalid patterns as `InvalidPattern`.
 4. `Session` methods return `Result<_, session::SessionError>` instead of `anyhow::Error`.
 5. `ResponseError` wraps `Box<dyn std::error::Error + Send + Sync>` instead of `anyhow::Error`. `?` still accepts standard errors, `anyhow::Error`, `Box<dyn Error>`, `String` and `&'static str`.
@@ -10,7 +10,7 @@
 
 ## New
 1. `DefaultBackend::max_bytes(Some(n))` limits stored payload bytes (`key.len() + value.len()`, UTF-8). It uses the same eviction policy as `max_entries`. Entries larger than the limit are rejected.
-2. Typed errors: `memorydb::MemoryDBError`/`MemoryDBResult`, `session::SessionError` and `utils::RustlsConfigError`.
+2. Typed errors: `memorydb::MemoryDBError`/`MemoryDBResult`, `session::SessionError`, `utils::RustlsConfigError` and `response_build::BuildError` (now covers I/O, YAML parsing and code generation failures).
 3. `Session::new()` creates a standalone empty session, useful for tests.
 
 # 0.7.3

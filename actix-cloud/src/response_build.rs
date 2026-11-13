@@ -3,19 +3,19 @@
 //! Call [`generate_response`] from `build.rs` to walk a directory of YAML files and
 //! emit one enum per file implementing [`ResponseCodeTrait`](crate::response::ResponseCodeTrait).
 //! See the `examples/response` example for the full setup.
-use anyhow::Result;
 use quote::{format_ident, quote};
 use std::{
     env,
     fs::{read_to_string, File},
-    io::Write,
+    io::{self, Write},
     path::Path,
 };
 use walkdir::WalkDir;
 use yaml_rust2::YamlLoader;
 
-/// Errors raised while parsing response YAML files.
+/// Errors raised while generating response codes.
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum BuildError {
     /// A YAML document does not follow the expected `name: {code, message}` shape.
     #[error("response file format invalid")]
@@ -24,6 +24,26 @@ pub enum BuildError {
     /// A file name cannot be turned into a valid enum name.
     #[error("response file name invalid")]
     File,
+
+    /// The `OUT_DIR` environment variable is missing or not valid UTF-8.
+    #[error(transparent)]
+    Env(#[from] env::VarError),
+
+    /// Reading a YAML file or writing the generated file failed.
+    #[error(transparent)]
+    Io(#[from] io::Error),
+
+    /// Walking the input directory failed.
+    #[error(transparent)]
+    WalkDir(#[from] walkdir::Error),
+
+    /// A YAML file could not be parsed.
+    #[error(transparent)]
+    Yaml(#[from] yaml_rust2::ScanError),
+
+    /// The generated code could not be parsed.
+    #[error(transparent)]
+    Syn(#[from] syn::Error),
 }
 
 /// Generate response enums from YAML files.
@@ -47,7 +67,7 @@ pub enum BuildError {
 ///
 /// generate_response("", "response", "response.rs").unwrap();
 /// ```
-pub fn generate_response(import_prefix: &str, input: &str, output: &str) -> Result<()> {
+pub fn generate_response(import_prefix: &str, input: &str, output: &str) -> Result<(), BuildError> {
     let out_dir = env::var("OUT_DIR")?;
     generate_response_in(Path::new(&out_dir), import_prefix, input, output)
 }
@@ -59,7 +79,7 @@ fn generate_response_in(
     import_prefix: &str,
     input: &str,
     output: &str,
-) -> Result<()> {
+) -> Result<(), BuildError> {
     let outfile = out_dir.join(output);
     let mut output = File::create(&outfile)?;
     writeln!(
@@ -91,7 +111,7 @@ fn generate_response_in(
                 || !stem.starts_with(|c: char| c.is_alphabetic() || c == '_')
                 || !stem.chars().all(|c| c.is_alphanumeric() || c == '_')
             {
-                return Err(BuildError::File.into());
+                return Err(BuildError::File);
             }
             let mut chars = stem.chars();
             let s = chars.next().unwrap().to_uppercase().collect::<String>() + chars.as_str();
@@ -193,10 +213,7 @@ mod tests {
             generate_response_in(&out_dir, "", &fixture("invalid_format"), "out.rs").unwrap_err();
         remove_dir_all(&out_dir).unwrap();
 
-        assert!(matches!(
-            err.downcast_ref::<BuildError>(),
-            Some(BuildError::Format)
-        ));
+        assert!(matches!(err, BuildError::Format));
     }
 
     #[test]
@@ -206,9 +223,6 @@ mod tests {
             generate_response_in(&out_dir, "", &fixture("invalid_name"), "out.rs").unwrap_err();
         remove_dir_all(&out_dir).unwrap();
 
-        assert!(matches!(
-            err.downcast_ref::<BuildError>(),
-            Some(BuildError::File)
-        ));
+        assert!(matches!(err, BuildError::File));
     }
 }

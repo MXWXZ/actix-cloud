@@ -12,11 +12,13 @@ default = []
 i18n = ["dep:rust-i18n-support"]
 
 [dependencies]
-quote = "1.0"
-syn = "3.0"
-proc-macro2 = "1.0"
+quote = "1.0.47"
+syn = "3.0.10"
+proc-macro2 = "1.0.107"
 
-rust-i18n-support = { version = "4.2", features = ["codegen"], optional = true }
+rust-i18n-support = { version = "4.2.4", features = [
+    "codegen",
+], optional = true }
 
 [lib]
 proc-macro = true
