@@ -54,7 +54,7 @@ GlobalState {
 Full-featured construction:
 ```
 let state = GlobalState {
-    memorydb: Arc::new(DefaultBackend::new(None)),
+    memorydb: Arc::new(DefaultBackend::new()),
     config: Config::default(),
     logger: Some(logger),
     locale: Locale::new("en-US").add_locale(i18n!("locale")),
@@ -189,16 +189,21 @@ Actix Cloud has a default memory database backend used for sessions. You can als
 **The default memorydb is only for demo purpose. The performance is not guaranteed.**
 
 ```
-DefaultBackend::new(None)   // No resource limitation, DDoS is possible!
-DefaultBackend::new(Some(100000000))  // Maximum 100000000 entries.
+DefaultBackend::new()                              // No resource limitation, DDoS is possible!
+DefaultBackend::new().max_entries(Some(100000000)) // Maximum 100000000 entries.
+DefaultBackend::new().max_bytes(Some(100000000))   // Maximum 100000000 bytes of key+value payload.
 ```
 
-When the database is full, key eviction policy is:
-- Evict 10% keys at a time.
-- Expired keys go first, then keys having TTL attribute, sorted by TTL from shortest to longest.
-- If no keys are evicted, an error will be returned.
+Both limits are optional and can be combined. `max_entries` is enforced when a write adds a new key; overwriting an existing key does not change the entry count, so only `max_bytes` applies to overwrites. `max_bytes` counts `key.len() + value.len()` UTF-8 bytes; internal allocations and TTL metadata are not counted.
 
-Note that the internal implementation uses lazy deletion for performance.
+When a write would exceed a configured limit, key eviction policy is:
+- Evict a batch of 10% of the exceeded limit at a time (at least 1 entry or 1 byte).
+- Expired keys go first, then keys having TTL attribute, sorted by TTL from shortest to longest.
+- Keys without a TTL are never evicted.
+- A single key+value larger than `max_bytes` is rejected without evicting anything.
+- If the write cannot be accommodated, an error will be returned.
+
+Note that the internal implementation uses lazy deletion for performance; expired entries that have not been reaped yet still count toward the limits.
 
 ### memorydb-redis
 Redis can be used as another backend for memory database. The connection reconnects automatically.

@@ -83,7 +83,7 @@ mod tests {
     }
 
     fn setup_default() -> impl MemoryDB {
-        DefaultBackend::new(None)
+        DefaultBackend::new()
     }
 
     #[tokio::test]
@@ -266,7 +266,7 @@ mod tests {
         let key3 = "_actix_cloud_ckey3";
         let value = "value";
 
-        let r = DefaultBackend::new(Some(2));
+        let r = DefaultBackend::new().max_entries(Some(2));
         let _ = r.del(key1).await;
         let _ = r.del(key2).await;
         let _ = r.del(key3).await;

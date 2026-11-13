@@ -99,7 +99,6 @@ memorydb = [
     "dep:parking_lot",
     "chrono",
     "anyhow",
-    "dep:priority-queue",
 ]
 config = ["dep:config"]
 serde = ["dep:serde", "dep:serde_json", "dep:serde_with"]
@@ -143,7 +142,6 @@ actix-web = { version = "4", features = ["secure-cookies"], optional = true }
 # memorydb
 glob = { version = "0.3", optional = true }
 parking_lot = { version = "0.12", optional = true }
-priority-queue = { version = "2.7", optional = true }
 
 # chrono
 chrono = { version = "0.4", features = ["serde"], optional = true }

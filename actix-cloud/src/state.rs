@@ -82,7 +82,7 @@ mod tests {
     fn state(server: ServerHandle) -> GlobalState {
         GlobalState {
             #[cfg(feature = "memorydb")]
-            memorydb: std::sync::Arc::new(crate::memorydb::default::DefaultBackend::new(None)),
+            memorydb: std::sync::Arc::new(crate::memorydb::default::DefaultBackend::new()),
             #[cfg(feature = "config")]
             config: config::Config::default(),
             #[cfg(feature = "logger")]

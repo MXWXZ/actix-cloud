@@ -1,3 +1,10 @@
+# 0.8.0
+## Breaking changes
+1. `DefaultBackend::new()` no longer takes a capacity argument. Configure limits with the chainable builders instead: `DefaultBackend::new().max_entries(Some(n))`. `DefaultBackend::new()` and `DefaultBackend::default()` are unbounded.
+
+## New
+1. `DefaultBackend::max_bytes(Some(n))` limits stored payload bytes (`key.len() + value.len()`, UTF-8). It uses the same eviction policy as `max_entries`. Entries larger than the limit are rejected.
+
 # 0.7.3
 ## Fix
 1. `build_router` now registers all routes for the same path on a single resource, so a request with an unregistered method returns 405 Method Not Allowed (with an `Allow` header) instead of 404 Not Found.
