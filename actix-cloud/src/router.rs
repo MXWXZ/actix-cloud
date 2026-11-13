@@ -17,7 +17,6 @@ use actix_web::{
     web::ServiceConfig,
     Route,
 };
-use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::LocalBoxFuture;
 

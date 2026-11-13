@@ -1,11 +1,17 @@
-use std::{borrow::Cow, fmt, future::Future, pin::Pin, rc::Rc, sync::Arc};
+use std::{
+    borrow::Cow,
+    fmt,
+    future::{ready, Future, Ready},
+    pin::Pin,
+    rc::Rc,
+    sync::Arc,
+};
 
-use actix_utils::future::{ready, Ready};
 use actix_web::{
     body::MessageBody,
     cookie::{time::Duration, Cookie, CookieJar, Key},
     dev::{forward_ready, ResponseHead, Service, ServiceRequest, ServiceResponse, Transform},
-    http::header::{HeaderValue, SET_COOKIE},
+    http::header::{HeaderValue, InvalidHeaderValue, SET_COOKIE},
     HttpResponse,
 };
 use serde_json::{Map, Value};
@@ -18,7 +24,7 @@ use super::{
     storage::{SessionKey, SessionStore},
     Session, SessionStatus,
 };
-use crate::{memorydb::MemoryDB, Result};
+use crate::memorydb::MemoryDB;
 
 /// A middleware for session management in Actix Web applications.
 ///
@@ -300,7 +306,7 @@ fn set_session_cookie(
     response: &mut ResponseHead,
     session_key: SessionKey,
     config: &CookieConfiguration,
-) -> Result<()> {
+) -> Result<(), InvalidHeaderValue> {
     let value: String = session_key.into();
     let mut cookie = Cookie::new(config.name.clone(), value);
 
@@ -332,7 +338,10 @@ fn set_session_cookie(
     Ok(())
 }
 
-fn delete_session_cookie(response: &mut ResponseHead, config: &CookieConfiguration) -> Result<()> {
+fn delete_session_cookie(
+    response: &mut ResponseHead,
+    config: &CookieConfiguration,
+) -> Result<(), InvalidHeaderValue> {
     let removal_cookie = Cookie::build(config.name.clone(), "")
         .path(config.path.clone())
         .secure(config.secure)

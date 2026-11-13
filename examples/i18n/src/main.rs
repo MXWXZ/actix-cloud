@@ -1,5 +1,3 @@
-use std::io;
-
 use actix_cloud::{
     i18n::{i18n, Locale},
     t,

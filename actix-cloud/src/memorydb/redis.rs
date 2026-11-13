@@ -8,8 +8,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use redis::{aio::ConnectionManager, AsyncCommands, Expiry};
 
-use super::interface::MemoryDB;
-use crate::Result;
+use super::interface::{MemoryDB, MemoryDBError, MemoryDBResult};
 
 /// Redis memory database backend.
 ///
@@ -22,76 +21,78 @@ pub struct RedisBackend {
 
 impl RedisBackend {
     /// Connect to Redis with a DSN like `redis://user:pass@127.0.0.1:6379/0`.
-    pub async fn new(dsn: &str) -> Result<Self> {
+    pub async fn new(dsn: &str) -> MemoryDBResult<Self> {
         let client = ConnectionManager::new(redis::Client::open(dsn)?).await?;
         Ok(Self { client })
     }
 }
 
+/// Convert a TTL to Redis milliseconds.
+///
+/// The result is non-negative, so casting it to `u64` for commands that take an
+/// unsigned duration is lossless.
+fn ttl_millis(ttl: &Duration) -> MemoryDBResult<i64> {
+    i64::try_from(ttl.as_millis()).map_err(|_| MemoryDBError::TtlOutOfRange)
+}
+
 #[async_trait]
 impl MemoryDB for RedisBackend {
-    async fn set(&self, key: &str, value: &str) -> Result<()> {
+    async fn set(&self, key: &str, value: &str) -> MemoryDBResult<()> {
         // SET also clears any TTL previously attached to the key.
-        self.client
-            .clone()
-            .set(key, value)
-            .await
-            .map_err(Into::into)
+        let _: () = self.client.clone().set(key, value).await?;
+        Ok(())
     }
 
-    async fn get(&self, key: &str) -> Result<Option<String>> {
-        self.client.clone().get(key).await.map_err(Into::into)
+    async fn get(&self, key: &str) -> MemoryDBResult<Option<String>> {
+        Ok(self.client.clone().get(key).await?)
     }
 
-    async fn get_del(&self, key: &str) -> Result<Option<String>> {
+    async fn get_del(&self, key: &str) -> MemoryDBResult<Option<String>> {
         // GETDEL removes the key atomically on the server.
-        self.client.clone().get_del(key).await.map_err(Into::into)
+        Ok(self.client.clone().get_del(key).await?)
     }
 
-    async fn get_ex(&self, key: &str, ttl: &Duration) -> Result<Option<String>> {
+    async fn get_ex(&self, key: &str, ttl: &Duration) -> MemoryDBResult<Option<String>> {
         // GETEX reads the value and replaces its expiration in one round trip.
-        self.client
+        Ok(self
+            .client
             .clone()
-            .get_ex(key, Expiry::PX(ttl.as_millis().try_into()?))
-            .await
-            .map_err(Into::into)
+            .get_ex(key, Expiry::PX(ttl_millis(ttl)? as u64))
+            .await?)
     }
 
-    async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> Result<()> {
+    async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> MemoryDBResult<()> {
         // PSETEX sets the value with a millisecond expiration atomically.
-        self.client
+        let _: () = self
+            .client
             .clone()
-            .pset_ex(key, value, ttl.as_millis().try_into()?)
-            .await
-            .map_err(Into::into)
+            .pset_ex(key, value, ttl_millis(ttl)? as u64)
+            .await?;
+        Ok(())
     }
 
-    async fn del(&self, key: &str) -> Result<bool> {
-        self.client.clone().del(key).await.map_err(Into::into)
+    async fn del(&self, key: &str) -> MemoryDBResult<bool> {
+        Ok(self.client.clone().del(key).await?)
     }
 
-    async fn expire(&self, key: &str, ttl: &Duration) -> Result<bool> {
+    async fn expire(&self, key: &str, ttl: &Duration) -> MemoryDBResult<bool> {
         // PEXPIRE reports false when the key does not exist; a zero TTL deletes it.
-        self.client
-            .clone()
-            .pexpire(key, ttl.as_millis().try_into()?)
-            .await
-            .map_err(Into::into)
+        Ok(self.client.clone().pexpire(key, ttl_millis(ttl)?).await?)
     }
 
-    async fn flush(&self) -> Result<()> {
+    async fn flush(&self) -> MemoryDBResult<()> {
         // FLUSHDB clears only the selected database (see `MemoryDB::flush`).
         redis::cmd("FLUSHDB")
-            .query_async(&mut self.client.clone())
-            .await
-            .map_err(Into::into)
+            .query_async::<()>(&mut self.client.clone())
+            .await?;
+        Ok(())
     }
 
-    async fn keys(&self, key: &str) -> Result<Vec<String>> {
-        self.client.clone().keys(key).await.map_err(Into::into)
+    async fn keys(&self, key: &str) -> MemoryDBResult<Vec<String>> {
+        Ok(self.client.clone().keys(key).await?)
     }
 
-    async fn dels(&self, keys: &[String]) -> Result<u64> {
+    async fn dels(&self, keys: &[String]) -> MemoryDBResult<u64> {
         // Run the DELs in a MULTI/EXEC transaction and sum their results.
         let mut p = redis::pipe();
         let mut p = p.atomic();
@@ -102,14 +103,14 @@ impl MemoryDB for RedisBackend {
         Ok(res.into_iter().sum())
     }
 
-    async fn ttl(&self, key: &str) -> Result<Option<Duration>> {
+    async fn ttl(&self, key: &str) -> MemoryDBResult<Option<Duration>> {
         // PTTL returns -2 for a missing key and -1 for a key without TTL; the trait
         // exposes both cases as `None`.
         let ret: i64 = self.client.clone().pttl(key).await?;
         if ret < 0 {
             Ok(None)
         } else {
-            Ok(Some(Duration::from_millis(ret.try_into()?)))
+            Ok(Some(Duration::from_millis(ret.unsigned_abs())))
         }
     }
 }

@@ -5,7 +5,6 @@
 //! This wrapper makes it thread safe, even for FFI libraries.
 //! You can use it everywhere and freely.
 use std::{
-    fmt::Write as _,
     future::Future,
     io::{self, stderr, stdout, Write},
     pin::Pin,
@@ -14,7 +13,6 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crate::Result;
 use chrono::{DateTime, Local, Utc};
 use colored::{Color, Colorize as _};
 use futures::executor::block_on;
@@ -229,7 +227,7 @@ impl Logger {
 }
 
 /// Writer callback: render one [`LogItem`] to the given sink (stdout/stderr).
-pub type WriterFn = Box<dyn Fn(LogItem, Box<dyn Write>) -> Result<()> + Send>;
+pub type WriterFn = Box<dyn Fn(LogItem, Box<dyn Write>) -> io::Result<()> + Send>;
 /// Filter callback: return `false` to drop a log entry before the transformer.
 pub type FilterFn = Box<dyn Fn(&LogItem) -> bool + Send>;
 /// Transformer callback: rewrite a log entry before writing.
@@ -323,27 +321,26 @@ impl LoggerBuilder {
             .to_string()
     }
 
-    fn default_json_writer(item: LogItem, mut writer: Box<dyn Write>) -> Result<()> {
+    fn default_json_writer(item: LogItem, mut writer: Box<dyn Write>) -> io::Result<()> {
         let v = serde_json::to_string(&item).unwrap_or_default();
         writer.write_fmt(format_args!("{v}\n"))?;
-        writer.flush().map_err(Into::into)
+        writer.flush()
     }
 
-    fn default_color_writer(item: LogItem, mut writer: Box<dyn Write>) -> Result<()> {
+    fn default_color_writer(item: LogItem, mut writer: Box<dyn Write>) -> io::Result<()> {
         let mut buf = String::new();
-        write!(
-            buf,
+        buf += &format!(
             "{} {} {}",
             item.time.as_str().unwrap_or_default().bright_black(),
             Self::fmt_level(&item.level),
             item.target.bright_black()
-        )?;
+        );
         if let (Some(filename), Some(line_number)) = (item.filename, item.line_number) {
             buf += &format!("({filename}:{line_number})")
                 .bright_black()
                 .to_string();
         }
-        write!(buf, "{} {}", ":".bright_black(), item.message)?;
+        buf += &format!("{} {}", ":".bright_black(), item.message);
         for (k, v) in &item.fields {
             if !k.starts_with("log.") {
                 buf += &format!(" field.{k}={v}").bright_black().to_string();
@@ -358,7 +355,7 @@ impl LoggerBuilder {
         }
 
         writer.write_fmt(format_args!("{buf}\n"))?;
-        writer.flush().map_err(Into::into)
+        writer.flush()
     }
 
     /// Create new logger instance.
@@ -643,11 +640,11 @@ mod tests {
         let (tx, mut rx) = unbounded_channel();
         let mut writer = LogSender::new(tx)();
 
-        let n = std::io::Write::write(&mut writer, br#"{"level":"INFO"}"#).unwrap();
+        let n = io::Write::write(&mut writer, br#"{"level":"INFO"}"#).unwrap();
         assert_eq!(n, 16);
         assert!(rx.try_recv().is_ok());
 
         // Non-JSON input is reported as a write error.
-        assert!(std::io::Write::write(&mut writer, b"not json").is_err());
+        assert!(io::Write::write(&mut writer, b"not json").is_err());
     }
 }

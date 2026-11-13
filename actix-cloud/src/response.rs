@@ -7,6 +7,9 @@
 //! [`response_build`](crate::response_build).
 use std::fmt::{self, Display};
 
+#[cfg(feature = "i18n")]
+use std::sync::Arc;
+
 use actix_web::{
     http::{
         header::{self, ContentDisposition, DispositionParam, DispositionType},
@@ -21,10 +24,10 @@ pub type RspResult<T> = Result<T, ResponseError>;
 
 /// Error type for handlers returning [`RspResult`].
 ///
-/// Wraps an `anyhow::Error`; the HTTP response is always an opaque 500 without
+/// Wraps any standard error; the HTTP response is always an opaque 500 without
 /// leaking the error details to the client.
 #[derive(Debug)]
-pub struct ResponseError(anyhow::Error);
+pub struct ResponseError(Box<dyn std::error::Error + Send + Sync>);
 
 impl Display for ResponseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -42,9 +45,14 @@ impl actix_web::ResponseError for ResponseError {
     }
 }
 
+// `T: Into<Box<dyn Error + Send + Sync>>` covers every `std::error::Error` that is
+// `Send + Sync + 'static`, plus `Box<dyn Error + Send + Sync>`, `String`, `&'static str`
+// and types with their own conversion (e.g. `anyhow::Error`), so handlers can keep
+// using `?` on arbitrary errors. `ResponseError` must not implement `Error` itself:
+// that would overlap the blanket impl with core's `From<T> for T`.
 impl<T> From<T> for ResponseError
 where
-    T: Into<anyhow::Error>,
+    T: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     fn from(t: T) -> Self {
         Self(t.into())
@@ -224,9 +232,7 @@ impl<T> Response<T> {
                 .map_or_else(
                     || self.message.clone(),
                     |state| {
-                        if let Some(ext) = req
-                            .extensions()
-                            .get::<std::sync::Arc<crate::request::Extension>>()
+                        if let Some(ext) = req.extensions().get::<Arc<crate::request::Extension>>()
                         {
                             crate::t!(state.locale, &self.message, &ext.lang)
                         } else {
@@ -303,6 +309,8 @@ impl actix_web::Responder for JsonResponse {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+
     #[cfg(feature = "response-json")]
     use serde_json::json;
 
@@ -491,7 +499,7 @@ mod tests {
 
     #[actix_web::test]
     async fn response_error_renders_opaque_500() {
-        let e = ResponseError::from(std::io::Error::other("secret details"));
+        let e = ResponseError::from(io::Error::other("secret details"));
         assert_eq!(e.to_string(), "secret details");
         assert_eq!(e.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
 

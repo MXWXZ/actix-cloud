@@ -140,7 +140,12 @@ fn generate_response_in(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        fs::{create_dir_all, remove_dir_all},
+        path::PathBuf,
+        process,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     use super::*;
 
@@ -154,14 +159,14 @@ mod tests {
     }
 
     /// Unique temporary output directory.
-    fn temp_dir() -> std::path::PathBuf {
+    fn temp_dir() -> PathBuf {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
         let dir = env::temp_dir().join(format!(
             "actix-cloud-response-build-{}-{}",
-            std::process::id(),
+            process::id(),
             COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(&dir).unwrap();
+        create_dir_all(&dir).unwrap();
         dir
     }
 
@@ -171,7 +176,7 @@ mod tests {
         generate_response_in(&out_dir, "crate::", &fixture("valid"), "response.rs").unwrap();
 
         let generated = read_to_string(out_dir.join("response.rs")).unwrap();
-        std::fs::remove_dir_all(&out_dir).unwrap();
+        remove_dir_all(&out_dir).unwrap();
 
         assert!(generated.contains("use crate::actix_cloud::response::ResponseCodeTrait;"));
         assert!(generated.contains("pub enum GeneralResponse"));
@@ -186,7 +191,7 @@ mod tests {
         let out_dir = temp_dir();
         let err =
             generate_response_in(&out_dir, "", &fixture("invalid_format"), "out.rs").unwrap_err();
-        std::fs::remove_dir_all(&out_dir).unwrap();
+        remove_dir_all(&out_dir).unwrap();
 
         assert!(matches!(
             err.downcast_ref::<BuildError>(),
@@ -199,7 +204,7 @@ mod tests {
         let out_dir = temp_dir();
         let err =
             generate_response_in(&out_dir, "", &fixture("invalid_name"), "out.rs").unwrap_err();
-        std::fs::remove_dir_all(&out_dir).unwrap();
+        remove_dir_all(&out_dir).unwrap();
 
         assert!(matches!(
             err.downcast_ref::<BuildError>(),

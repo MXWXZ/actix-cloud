@@ -3,7 +3,11 @@
 //! Wrap the app with [`Middleware`] and handlers can read the [`Extension`] from request
 //! extensions (`ReqData<Arc<Extension>>` or `req.extensions()`): request start time,
 //! identified language, trace id and client real IP.
-use std::{net::SocketAddr, rc::Rc, sync::Arc};
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    rc::Rc,
+    sync::Arc,
+};
 
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
@@ -57,7 +61,7 @@ impl Middleware {
         // Peer address can be absent (e.g. unix sockets, tests); fall back to
         // the unspecified address instead of panicking.
         req.peer_addr()
-            .unwrap_or_else(|| SocketAddr::new(std::net::Ipv4Addr::UNSPECIFIED.into(), 0))
+            .unwrap_or_else(|| SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0))
     }
 
     #[cfg(feature = "i18n")]

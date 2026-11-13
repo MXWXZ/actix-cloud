@@ -50,8 +50,13 @@ all = [
     "response-json",
 ]
 
-utils = ["dep:rand", "anyhow", "dep:hex"]
-rustls = ["actix-web/rustls-0_23", "dep:rustls", "dep:rustls-pemfile"]
+utils = ["dep:rand", "dep:hex"]
+rustls = [
+    "actix-web/rustls-0_23",
+    "dep:rustls",
+    "dep:rustls-pemfile",
+    "dep:thiserror",
+]
 macros = ["dep:actix-cloud-codegen"]
 config-json = ["config", "config/json"]
 config-yaml = ["config", "config/yaml"]
@@ -61,7 +66,6 @@ logger = [
     "dep:tracing-subscriber",
     "dep:colored",
     "serde",
-    "anyhow",
     "dep:futures",
     "tokio",
     "chrono",
@@ -70,8 +74,14 @@ i18n = ["actix-cloud-codegen/i18n"]
 redis = ["dep:redis", "memorydb"]
 request = ["actix-web", "dep:futures", "chrono"]
 traceid = ["dep:tracing-actix-web"]
-state = ["anyhow", "actix-web", "chrono", "dep:parking_lot"]
-session = ["dep:actix-utils", "serde", "memorydb", "actix-web", "dep:rand"]
+state = ["actix-web", "chrono", "dep:parking_lot"]
+session = [
+    "serde",
+    "memorydb",
+    "actix-web",
+    "dep:rand",
+    "dep:thiserror",
+]
 csrf = [
     "dep:qstring",
     "dep:enum-as-inner",
@@ -81,7 +91,7 @@ csrf = [
 ]
 security = ["actix-web"]
 response-build = [
-    "anyhow",
+    "dep:anyhow",
     "dep:thiserror",
     "dep:walkdir",
     "dep:yaml-rust2",
@@ -91,28 +101,28 @@ response-build = [
 ]
 response-json = ["response", "serde"]
 
-response = ["actix-web", "dep:futures", "anyhow"]
-router = ["actix-web", "anyhow", "async-trait", "dep:futures"]
+response = ["actix-web", "dep:futures"]
+router = ["actix-web", "async-trait", "dep:futures"]
 memorydb = [
     "dep:glob",
     "async-trait",
     "dep:parking_lot",
     "chrono",
-    "anyhow",
+    "dep:thiserror",
 ]
 config = ["dep:config"]
 serde = ["dep:serde", "dep:serde_json", "dep:serde_with"]
-anyhow = ["dep:anyhow"]
+actix-web = ["dep:actix-web"]
 async-trait = ["dep:async-trait"]
 chrono = ["dep:chrono"]
 tokio = ["dep:tokio"]
-actix-web = ["dep:actix-web"]
 
 [dependencies]
 # utils
 rand = { version = "0.10", optional = true }
 anyhow = { version = "1.0", optional = true }
 hex = { version = "0.4", optional = true }
+thiserror = { version = "2.0", optional = true }
 
 # rustls
 rustls = { version = "0.23", optional = true }
@@ -160,9 +170,6 @@ redis = { version = "1.6", features = [
     "connection-manager",
 ], optional = true }
 
-# session
-actix-utils = { version = "3.0", optional = true }
-
 # build
 walkdir = { version = "2.5", optional = true }
 yaml-rust2 = { version = "0.12", optional = true }
@@ -176,9 +183,6 @@ tracing-actix-web = { version = "0.7", optional = true }
 # csrf
 qstring = { version = "0.7", optional = true }
 enum-as-inner = { version = "0.7", optional = true }
-
-# response-build 
-thiserror = { version = "2.0", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

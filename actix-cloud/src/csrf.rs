@@ -173,9 +173,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
+    use std::{
+        future,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
     };
 
     use actix_web::{
@@ -222,7 +225,7 @@ mod tests {
     ) -> StatusCode {
         let mw = Middleware::new("_csrf".to_owned(), "x-csrf".to_owned(), move |_, token| {
             checked.store(true, Ordering::SeqCst);
-            std::future::ready(Ok::<_, actix_web::Error>(checker_ok && token == "token"))
+            future::ready(Ok::<_, actix_web::Error>(checker_ok && token == "token"))
         });
         let app = actix_web::test::init_service(
             App::new().service(web::scope("/api").configure(build_router(routers, mw))),

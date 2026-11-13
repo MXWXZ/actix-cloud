@@ -94,7 +94,7 @@ Builder options:
 | `filter(Fn(&LogItem) -> bool)`        | Return `false` to drop a log entry.                                       |
 | `transformer(Fn(LogItem) -> LogItem)` | Rewrite entries on the fly.                                               |
 | `handler(Fn(&Map) -> Future<bool>)`   | Raw JSON handler invoked first; return `false` to skip normal processing. |
-| `json_writer` / `color_writer`        | Custom writers (`Fn(LogItem, Box<dyn Write>) -> Result<()>`).             |
+| `json_writer` / `color_writer`        | Custom writers (`Fn(LogItem, Box<dyn Write>) -> io::Result<()>`).         |
 
 Wait until every queued log entry has been written out:
 ```
@@ -201,7 +201,7 @@ When a write would exceed a configured limit, key eviction policy is:
 - Expired keys go first, then keys having TTL attribute, sorted by TTL from shortest to longest.
 - Keys without a TTL are never evicted.
 - A single key+value larger than `max_bytes` is rejected without evicting anything.
-- If the write cannot be accommodated, an error will be returned.
+- If the write cannot be accommodated, a `MemoryDBError` is returned.
 
 Note that the internal implementation uses lazy deletion for performance; expired entries that have not been reaped yet still count toward the limits.
 
@@ -380,7 +380,7 @@ JsonResponse::new(GeneralResponse::Ok).json(data)
 
 On success (2xx) the body is `{"code": ..., "message": ..., "data": ...}` (`204` has no body and no JSON header). On failure the body is the message as-is.
 
-Handlers can return `RspResult<T>`; `ResponseError` wraps an `anyhow::Error` and always responds with an **opaque** 500 (no error details leak to the client):
+Handlers can return `RspResult<T>`; `ResponseError` wraps any standard error and always responds with an **opaque** 500 (no error details leak to the client):
 ```
 async fn page() -> RspResult<impl Responder> {
     let data = get_data()?;

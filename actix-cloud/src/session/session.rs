@@ -1,19 +1,19 @@
 use std::{
     cell::{Ref, RefCell},
+    convert::Infallible,
+    future::{ready, Ready},
     mem,
     rc::Rc,
 };
 
-use actix_utils::future::{ready, Ready};
 use actix_web::{
     dev::{Extensions, Payload, ServiceRequest, ServiceResponse},
-    error::Error,
     FromRequest, HttpMessage, HttpRequest,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Map, Value};
 
-use crate::Result;
+use crate::session::error::SessionError;
 
 /// The primary interface to access and modify session state.
 ///
@@ -22,6 +22,9 @@ use crate::Result;
 ///
 /// You can also retrieve a [`Session`] object from an `HttpRequest` or a `ServiceRequest` using
 /// [`SessionExt`].
+///
+/// For tests outside of request handling, use [`Session::new`] to create a standalone empty
+/// session.
 ///
 /// [`SessionExt`]: super::SessionExt
 #[derive(Clone)]
@@ -57,10 +60,21 @@ struct SessionInner {
 }
 
 impl Session {
+    /// Creates a standalone empty [`Session`].
+    ///
+    /// This is useful for testing code that accepts a [`Session`] directly. Sessions created using
+    /// this constructor are not attached to an Actix Web request, so their state will not be
+    /// persisted by [`SessionMiddleware`].
+    ///
+    /// [`SessionMiddleware`]: super::SessionMiddleware
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Get a `value` from the session.
     ///
     /// It returns an error if it fails to deserialize as `T` the JSON value associated with `key`.
-    pub fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
+    pub fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>, SessionError> {
         if let Some(value) = self.0.borrow().state.get(key) {
             Ok(Some(serde_json::from_value::<T>(value.clone())?))
         } else {
@@ -93,7 +107,11 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if JSON serialization of `value` fails.
-    pub fn insert<T: Serialize>(&self, key: impl Into<String>, value: T) -> Result<()> {
+    pub fn insert<T: Serialize>(
+        &self,
+        key: impl Into<String>,
+        value: T,
+    ) -> Result<(), SessionError> {
         let mut inner = self.0.borrow_mut();
 
         if inner.status != SessionStatus::Purged {
@@ -125,7 +143,7 @@ impl Session {
         &self,
         key: impl Into<String>,
         updater: F,
-    ) -> Result<()>
+    ) -> Result<(), SessionError>
     where
         F: FnOnce(T) -> T,
     {
@@ -159,7 +177,7 @@ impl Session {
         key: &str,
         default_value: T,
         updater: F,
-    ) -> Result<()>
+    ) -> Result<(), SessionError>
     where
         F: FnOnce(T) -> T,
     {
@@ -266,17 +284,23 @@ impl Session {
             return Session(Rc::clone(s_impl));
         }
 
-        let inner = Rc::new(RefCell::new(SessionInner::default()));
-        extensions.insert(inner.clone());
+        let session = Session::default();
+        extensions.insert(Rc::clone(&session.0));
 
-        Session(inner)
+        session
+    }
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self(Rc::new(RefCell::new(SessionInner::default())))
     }
 }
 
 /// Extractor implementation for [`Session`]s.
 impl FromRequest for Session {
-    type Error = Error;
-    type Future = Ready<Result<Session, Error>>;
+    type Error = Infallible;
+    type Future = Ready<Result<Session, Self::Error>>;
 
     #[inline]
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {

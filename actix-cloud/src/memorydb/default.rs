@@ -7,14 +7,12 @@
 //! See [`DefaultBackend`] for the eviction policy and its production caveats.
 use std::{cmp::max, collections::HashMap, sync::Arc, time::Duration};
 
-use anyhow::bail;
 use async_trait::async_trait;
 use chrono::Utc;
 use glob::Pattern;
 use parking_lot::RwLock;
 
-use super::interface::MemoryDB;
-use crate::Result;
+use super::interface::{MemoryDB, MemoryDBError, MemoryDBResult};
 
 /// Internal entry: `(value, absolute expiration timestamp in ms)`. `None` means no TTL.
 struct Data(String, Option<i64>);
@@ -56,6 +54,11 @@ impl Data {
             true
         }
     }
+}
+
+/// Convert a TTL to milliseconds, rejecting values that do not fit in `i64`.
+fn ttl_millis(ttl: &Duration) -> MemoryDBResult<i64> {
+    i64::try_from(ttl.as_millis()).map_err(|_| MemoryDBError::TtlOutOfRange)
 }
 
 /// Storage plus the running total of stored payload bytes.
@@ -115,7 +118,7 @@ impl Store {
     ///
     /// `exclude` is never a candidate. Expired entries are always reaped; live
     /// entries are only evicted when the candidate pool can satisfy the hard needs.
-    fn evict(&mut self, exclude: &str, entries: Quota, bytes: Quota) -> Result<()> {
+    fn evict(&mut self, exclude: &str, entries: Quota, bytes: Quota) -> MemoryDBResult<()> {
         let mut freed_entries: usize = 0;
         let mut freed_bytes: usize = 0;
         let mut candidates = Vec::new();
@@ -141,10 +144,10 @@ impl Store {
         self.used_bytes = self.used_bytes.saturating_sub(freed_bytes);
 
         if freed_entries.saturating_add(candidates.len()) < entries.need {
-            bail!("max entries exceeded");
+            return Err(MemoryDBError::MaxEntriesExceeded);
         }
         if bytes.need > 0 && freed_bytes.saturating_add(candidate_bytes) < bytes.need {
-            bail!("max bytes exceeded");
+            return Err(MemoryDBError::MaxBytesExceeded);
         }
 
         candidates.sort_unstable_by_key(|(_, expiry)| *expiry);
@@ -258,14 +261,14 @@ impl DefaultBackend {
     /// Returns an error if the entry alone exceeds `max_bytes`, or if eviction cannot
     /// free enough entries/bytes. On error, live TTL entries are only evicted when the
     /// write is feasible, so a doomed write does not evict survivors.
-    fn prepare_write(&self, store: &mut Store, key: &str, data: &Data) -> Result<()> {
+    fn prepare_write(&self, store: &mut Store, key: &str, data: &Data) -> MemoryDBResult<()> {
         if self.max_entries.is_none() && self.max_bytes.is_none() {
             return Ok(());
         }
 
         let incoming = Store::entry_bytes(key, data);
         if self.max_bytes.is_some_and(|limit| incoming > limit) {
-            bail!("entry is larger than max bytes");
+            return Err(MemoryDBError::EntryTooLarge);
         }
 
         let old = store.map.get(key);
@@ -294,7 +297,7 @@ impl DefaultBackend {
     }
 
     /// Shared implementation of [`MemoryDB::set`] and [`MemoryDB::set_ex`].
-    fn set_inner(&self, key: &str, value: &str, ttl: Option<i64>) -> Result<()> {
+    fn set_inner(&self, key: &str, value: &str, ttl: Option<i64>) -> MemoryDBResult<()> {
         let data = Data::new(value, ttl);
         let mut store = self.data.write();
         self.prepare_write(&mut store, key, &data)?;
@@ -305,11 +308,11 @@ impl DefaultBackend {
 
 #[async_trait]
 impl MemoryDB for DefaultBackend {
-    async fn set(&self, key: &str, value: &str) -> Result<()> {
+    async fn set(&self, key: &str, value: &str) -> MemoryDBResult<()> {
         self.set_inner(key, value, None)
     }
 
-    async fn get(&self, key: &str) -> Result<Option<String>> {
+    async fn get(&self, key: &str) -> MemoryDBResult<Option<String>> {
         let rlock = self.data.read();
         if let Some(v) = rlock.map.get(key) {
             if v.valid() {
@@ -324,7 +327,7 @@ impl MemoryDB for DefaultBackend {
         }
     }
 
-    async fn get_del(&self, key: &str) -> Result<Option<String>> {
+    async fn get_del(&self, key: &str) -> MemoryDBResult<Option<String>> {
         let v = self.data.write().remove(key);
         if let Some(v) = v {
             if v.valid() {
@@ -334,16 +337,16 @@ impl MemoryDB for DefaultBackend {
         Ok(None)
     }
 
-    async fn get_ex(&self, key: &str, ttl: &Duration) -> Result<Option<String>> {
+    async fn get_ex(&self, key: &str, ttl: &Duration) -> MemoryDBResult<Option<String>> {
         let mut wlock = self.data.write();
         if let Some(v) = wlock.map.get_mut(key) {
             if v.valid() {
                 let ret = v.0.to_owned();
-                let ms = ttl.as_millis();
+                let ms = ttl_millis(ttl)?;
                 if ms == 0 {
                     wlock.remove(key);
                 } else {
-                    v.set_ttl(Some(ms.try_into()?));
+                    v.set_ttl(Some(ms));
                 }
                 Ok(Some(ret))
             } else {
@@ -355,15 +358,15 @@ impl MemoryDB for DefaultBackend {
         }
     }
 
-    async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> Result<()> {
-        let ms = ttl.as_millis();
+    async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> MemoryDBResult<()> {
+        let ms = ttl_millis(ttl)?;
         if ms == 0 {
             return self.del(key).await.map(|_| ());
         }
-        self.set_inner(key, value, Some(ms.try_into()?))
+        self.set_inner(key, value, Some(ms))
     }
 
-    async fn del(&self, key: &str) -> Result<bool> {
+    async fn del(&self, key: &str) -> MemoryDBResult<bool> {
         // Expired entries are logically absent even if they have not been reaped yet.
         Ok(match self.data.write().remove(key) {
             Some(v) => v.valid(),
@@ -371,15 +374,15 @@ impl MemoryDB for DefaultBackend {
         })
     }
 
-    async fn expire(&self, key: &str, ttl: &Duration) -> Result<bool> {
-        let ms = ttl.as_millis();
+    async fn expire(&self, key: &str, ttl: &Duration) -> MemoryDBResult<bool> {
+        let ms = ttl_millis(ttl)?;
         if ms == 0 {
             self.del(key).await
         } else {
             let mut wlock = self.data.write();
             if let Some(v) = wlock.map.get_mut(key) {
                 if v.valid() {
-                    v.set_ttl(Some(ms.try_into()?));
+                    v.set_ttl(Some(ms));
                     Ok(true)
                 } else {
                     wlock.remove(key);
@@ -391,14 +394,14 @@ impl MemoryDB for DefaultBackend {
         }
     }
 
-    async fn flush(&self) -> Result<()> {
+    async fn flush(&self) -> MemoryDBResult<()> {
         self.data.write().clear();
         Ok(())
     }
 
-    async fn keys(&self, key: &str) -> Result<Vec<String>> {
+    async fn keys(&self, key: &str) -> MemoryDBResult<Vec<String>> {
         let mut ret = Vec::new();
-        let p = Pattern::new(key)?;
+        let p = Pattern::new(key).map_err(|e| MemoryDBError::InvalidPattern(e.to_string()))?;
         for (k, v) in self.data.read().map.iter() {
             if v.valid() && p.matches(k) {
                 ret.push(k.to_owned());
@@ -407,7 +410,7 @@ impl MemoryDB for DefaultBackend {
         Ok(ret)
     }
 
-    async fn dels(&self, keys: &[String]) -> Result<u64> {
+    async fn dels(&self, keys: &[String]) -> MemoryDBResult<u64> {
         let mut wlock = self.data.write();
         let mut sum = 0;
         for i in keys {
@@ -419,12 +422,16 @@ impl MemoryDB for DefaultBackend {
         Ok(sum)
     }
 
-    async fn ttl(&self, key: &str) -> Result<Option<Duration>> {
+    async fn ttl(&self, key: &str) -> MemoryDBResult<Option<Duration>> {
         let rlock = self.data.read();
         if let Some(v) = rlock.map.get(key) {
             if v.valid() {
                 v.get_ttl()
-                    .map(|x| Ok(Duration::from_millis(x.try_into()?)))
+                    .map(|x| {
+                        u64::try_from(x)
+                            .map(Duration::from_millis)
+                            .map_err(|_| MemoryDBError::TtlOutOfRange)
+                    })
                     .transpose()
             } else {
                 drop(rlock);

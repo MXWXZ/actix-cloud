@@ -15,7 +15,6 @@ use actix_cloud::{
     security::SecurityHeader,
     state::{GlobalState, ServerHandle},
     tracing_actix_web::TracingLogger,
-    Result,
 };
 use qstring::QString;
 

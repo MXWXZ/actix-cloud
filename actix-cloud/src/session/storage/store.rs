@@ -5,7 +5,7 @@ use actix_web::cookie::time::Duration;
 use serde_json::{Map, Value};
 
 use super::{utils::generate_session_key, SessionKey};
-use crate::{memorydb::MemoryDB, Result};
+use crate::{memorydb::MemoryDB, session::error::SessionError};
 
 pub(crate) type SessionState = Map<String, Value>;
 
@@ -51,7 +51,10 @@ impl SessionStore {
 
     /// Load the session state of `session_key`. Returns `None` when the key is unknown,
     /// has expired, or its state fails to deserialize (treated as data loss).
-    pub async fn load(&self, session_key: &SessionKey) -> Result<Option<SessionState>> {
+    pub async fn load(
+        &self,
+        session_key: &SessionKey,
+    ) -> Result<Option<SessionState>, SessionError> {
         let cache_key = (self.configuration.cache_keygen)(session_key.as_ref());
         let value = self.client.get(&cache_key).await?;
 
@@ -69,7 +72,7 @@ impl SessionStore {
         body: &str,
         id: &Option<String>,
         ttl: &Duration,
-    ) -> Result<()> {
+    ) -> Result<(), SessionError> {
         let cache_key = (self.configuration.cache_keygen)(session_key);
         self.client
             .set_ex(&cache_key, body, &Self::parse_ttl(ttl))
@@ -88,7 +91,7 @@ impl SessionStore {
         session_state: SessionState,
         id: &Option<String>,
         ttl: &Duration,
-    ) -> Result<SessionKey> {
+    ) -> Result<SessionKey, SessionError> {
         let body = serde_json::to_string(&session_state)?;
         let session_key = generate_session_key();
         self.persist(session_key.as_ref(), &body, id, ttl).await?;
@@ -103,7 +106,7 @@ impl SessionStore {
         session_state: SessionState,
         id: &Option<String>,
         ttl: &Duration,
-    ) -> Result<SessionKey> {
+    ) -> Result<SessionKey, SessionError> {
         let body = serde_json::to_string(&session_state)?;
         self.persist(session_key.as_ref(), &body, id, ttl).await?;
         Ok(session_key)
@@ -116,7 +119,7 @@ impl SessionStore {
         session_key: &SessionKey,
         id: &Option<String>,
         ttl: &Duration,
-    ) -> Result<()> {
+    ) -> Result<(), SessionError> {
         let cache_key = (self.configuration.cache_keygen)(session_key.as_ref());
 
         self.client
@@ -131,7 +134,11 @@ impl SessionStore {
     }
 
     /// Delete the session state and its reverse-lookup binding.
-    pub async fn delete(&self, session_key: &SessionKey, id: &Option<String>) -> Result<()> {
+    pub async fn delete(
+        &self,
+        session_key: &SessionKey,
+        id: &Option<String>,
+    ) -> Result<(), SessionError> {
         let cache_key = (self.configuration.cache_keygen)(session_key.as_ref());
 
         self.client.del(&cache_key).await?;

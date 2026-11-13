@@ -1,6 +1,5 @@
 use actix_cloud::config;
-use actix_cloud::config::Config;
-use actix_cloud::Result;
+use actix_cloud::config::{Config, ConfigError};
 use serde::Deserialize;
 use serde_inline_default::serde_inline_default;
 use validator::Validate;
@@ -42,7 +41,7 @@ fn main() {
         .add_source(config::File::with_name("setting_invalid.yml"))
         .build()
         .unwrap();
-    let setting: Result<Setting> = cfg.try_deserialize().map_err(Into::into);
+    let setting: Result<Setting, ConfigError> = cfg.try_deserialize();
     println!("Invalid: {:?}", setting);
 
     let cfg = Config::builder()

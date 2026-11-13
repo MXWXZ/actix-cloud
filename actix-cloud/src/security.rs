@@ -2,7 +2,7 @@
 //!
 //! Wrap the app with [`SecurityHeader::default().build()`](SecurityHeader::build) and
 //! customize fields or enable HSTS (see [`SecurityHeader::set_default_hsts`]) as needed.
-use std::fmt::Display;
+use std::fmt::{self, Display};
 
 use actix_web::middleware;
 
@@ -21,7 +21,7 @@ pub enum RefererPolicy {
 }
 
 impl Display for RefererPolicy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             RefererPolicy::NoReferrer => "no-referrer",
             RefererPolicy::NoReferrerWhenDowngrade => "no-referrer-when-downgrade",
@@ -44,7 +44,7 @@ pub enum XFrameOptions {
 }
 
 impl Display for XFrameOptions {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             XFrameOptions::Deny => "DENY",
             XFrameOptions::SameOrigin => "SAMEORIGIN",
@@ -62,7 +62,7 @@ pub enum CrossOriginOpenerPolicy {
 }
 
 impl Display for CrossOriginOpenerPolicy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             CrossOriginOpenerPolicy::UnsafeNone => "unsafe-none",
             CrossOriginOpenerPolicy::SameOriginAllowPopups => "same-origin-allow-popups",
@@ -82,7 +82,7 @@ pub enum StrictTransportSecurity {
 }
 
 impl Display for StrictTransportSecurity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             StrictTransportSecurity::MaxAge(x) => f.write_str(&format!("max-age={}", x)),
             StrictTransportSecurity::IncludeSubDomains(x) => {

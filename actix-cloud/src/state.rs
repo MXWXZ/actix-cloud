@@ -2,18 +2,21 @@
 //!
 //! Populate [`GlobalState`] (fields depend on enabled features), attach it with
 //! `.build()` as app data, and let [`ServerHandle`] own the actix server lifecycle.
+use std::io;
+
+#[cfg(feature = "memorydb")]
+use std::sync::Arc;
+
 use actix_web::dev;
 use actix_web::web::Data;
 use chrono::{DateTime, Utc};
 use parking_lot::{Mutex, RwLock};
 
-use crate::Result;
-
 /// Shared application state, stored as actix-web `Data<GlobalState>`.
 pub struct GlobalState {
     #[cfg(feature = "memorydb")]
     /// Shared key-value database (sessions, CSRF tokens, ...).
-    pub memorydb: std::sync::Arc<dyn crate::memorydb::interface::MemoryDB>,
+    pub memorydb: Arc<dyn crate::memorydb::interface::MemoryDB>,
 
     #[cfg(feature = "config")]
     /// Application configuration loaded through the `config` crate.
@@ -53,12 +56,12 @@ pub struct ServerHandle {
 
 impl ServerHandle {
     /// Sets the server handle and start blocking.
-    pub async fn start(&self, server: dev::Server) -> Result<()> {
+    pub async fn start(&self, server: dev::Server) -> io::Result<()> {
         *self.inner.lock() = Some(server.handle());
         *self.running.write() = true;
         *self.start_time.write() = Utc::now();
 
-        server.await.map_err(Into::into)
+        server.await
     }
 
     /// Sends stop signal through contained server handle.
@@ -82,7 +85,7 @@ mod tests {
     fn state(server: ServerHandle) -> GlobalState {
         GlobalState {
             #[cfg(feature = "memorydb")]
-            memorydb: std::sync::Arc::new(crate::memorydb::default::DefaultBackend::new()),
+            memorydb: Arc::new(crate::memorydb::default::DefaultBackend::new()),
             #[cfg(feature = "config")]
             config: config::Config::default(),
             #[cfg(feature = "logger")]

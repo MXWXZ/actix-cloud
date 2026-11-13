@@ -23,14 +23,6 @@ pub mod macros {
 }
 #[cfg(feature = "actix-web")]
 pub use actix_web;
-#[cfg(feature = "anyhow")]
-pub use anyhow;
-#[cfg(feature = "anyhow")]
-pub use anyhow::bail;
-#[cfg(feature = "anyhow")]
-pub use anyhow::Error;
-#[cfg(feature = "anyhow")]
-pub use anyhow::Result;
 #[cfg(feature = "async-trait")]
 pub use async_trait::async_trait;
 #[cfg(feature = "chrono")]

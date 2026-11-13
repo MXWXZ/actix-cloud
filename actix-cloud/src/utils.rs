@@ -2,15 +2,17 @@ use std::{
     collections::HashSet,
     env,
     hash::Hash,
+    io,
     process::{Child, Command},
 };
+
+#[cfg(feature = "rustls")]
+use std::{fs, path};
 
 use rand::{
     distr::{Alphanumeric, Uniform},
     rng, RngExt as _,
 };
-
-use crate::Result;
 
 /// Check whether iterator `iter` contains only unique values.
 pub fn is_unique<T>(iter: T) -> bool
@@ -58,11 +60,25 @@ pub fn rand_string_all(n: usize) -> String {
 /// Restart the current program with the same command line arguments.
 ///
 /// Inherits the environment, stdio and working directory of the current process.
-pub fn restart() -> Result<Child> {
+pub fn restart() -> io::Result<Child> {
     Command::new(env::current_exe()?)
         .args(env::args().skip(1))
         .spawn()
-        .map_err(Into::into)
+}
+
+/// Errors returned by [`load_rustls_config`].
+#[cfg(feature = "rustls")]
+#[derive(Debug, thiserror::Error)]
+pub enum RustlsConfigError {
+    /// The private key file contains no PKCS 8 private key.
+    #[error("cannot find PKCS 8 private key")]
+    MissingPrivateKey,
+    /// Reading the certificate or private key file failed.
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    /// rustls rejected the certificate and private key.
+    #[error(transparent)]
+    Rustls(#[from] rustls::Error),
 }
 
 #[cfg(feature = "rustls")]
@@ -70,27 +86,24 @@ pub fn restart() -> Result<Child> {
 ///
 /// Only PKCS 8 private keys are supported (`BEGIN PRIVATE KEY`). The aws-lc-rs
 /// provider is installed as the default rustls crypto provider.
-pub fn load_rustls_config<P: AsRef<std::path::Path>>(
+pub fn load_rustls_config<P: AsRef<path::Path>>(
     cert: P,
     key: P,
-) -> Result<rustls::ServerConfig> {
+) -> Result<rustls::ServerConfig, RustlsConfigError> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let config = rustls::ServerConfig::builder().with_no_client_auth();
-    let cert_chain =
-        rustls_pemfile::certs(&mut std::io::BufReader::new(std::fs::File::open(cert)?))
-            .collect::<Result<Vec<_>, _>>()?;
+    let cert_chain = rustls_pemfile::certs(&mut io::BufReader::new(fs::File::open(cert)?))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut key_chain =
-        rustls_pemfile::pkcs8_private_keys(&mut std::io::BufReader::new(std::fs::File::open(key)?))
+        rustls_pemfile::pkcs8_private_keys(&mut io::BufReader::new(fs::File::open(key)?))
             .map(|v| v.map(rustls::pki_types::PrivateKeyDer::Pkcs8))
             .collect::<Result<Vec<_>, _>>()?;
 
     let Some(private_key) = key_chain.pop() else {
-        anyhow::bail!("cannot find PKCS 8 private key");
+        return Err(RustlsConfigError::MissingPrivateKey);
     };
 
-    config
-        .with_single_cert(cert_chain, private_key)
-        .map_err(Into::into)
+    Ok(config.with_single_cert(cert_chain, private_key)?)
 }
 
 #[cfg(test)]

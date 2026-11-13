@@ -2,11 +2,50 @@
 //!
 //! Backends store string values under string keys with millisecond-precision TTLs.
 //! New backends should be plugged into the generic tests at the bottom of this module.
-use std::time::Duration;
+use std::{error::Error, time::Duration};
 
 use async_trait::async_trait;
 
-use crate::Result;
+/// Errors returned by [`MemoryDB`] operations.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum MemoryDBError {
+    /// A write would exceed the backend's entry limit.
+    #[error("max entries exceeded")]
+    MaxEntriesExceeded,
+    /// A write would exceed the backend's byte limit.
+    #[error("max bytes exceeded")]
+    MaxBytesExceeded,
+    /// A single entry is larger than the backend's byte limit.
+    #[error("entry is larger than max bytes")]
+    EntryTooLarge,
+    /// A TTL cannot be represented in milliseconds by the backend.
+    #[error("ttl is out of range")]
+    TtlOutOfRange,
+    /// The glob pattern passed to [`MemoryDB::keys`] is invalid.
+    #[error("invalid key pattern: {0}")]
+    InvalidPattern(String),
+    /// The Redis backend returned an error.
+    #[cfg(feature = "redis")]
+    #[error(transparent)]
+    Redis(#[from] redis::RedisError),
+    /// An error from a custom backend.
+    #[error("{0}")]
+    Other(#[source] Box<dyn Error + Send + Sync>),
+}
+
+impl MemoryDBError {
+    /// Wrap an arbitrary backend error.
+    pub fn other<E>(err: E) -> Self
+    where
+        E: Into<Box<dyn Error + Send + Sync>>,
+    {
+        Self::Other(err.into())
+    }
+}
+
+/// [`Result`] alias with [`MemoryDBError`] as the error type.
+pub type MemoryDBResult<T> = Result<T, MemoryDBError>;
 
 /// Object-safe async key-value database trait.
 ///
@@ -20,45 +59,45 @@ use crate::Result;
 #[async_trait]
 pub trait MemoryDB: Send + Sync {
     /// Set `key` to `value` without expiration.
-    async fn set(&self, key: &str, value: &str) -> Result<()>;
+    async fn set(&self, key: &str, value: &str) -> MemoryDBResult<()>;
 
     /// Get the value of `key`, or `None` if it does not exist or has expired.
-    async fn get(&self, key: &str) -> Result<Option<String>>;
+    async fn get(&self, key: &str) -> MemoryDBResult<Option<String>>;
 
     /// Get the value of `key` and delete it atomically.
-    async fn get_del(&self, key: &str) -> Result<Option<String>>;
+    async fn get_del(&self, key: &str) -> MemoryDBResult<Option<String>>;
 
     /// Get the value of `key` and reset its TTL to `ttl`.
-    async fn get_ex(&self, key: &str, ttl: &Duration) -> Result<Option<String>>;
+    async fn get_ex(&self, key: &str, ttl: &Duration) -> MemoryDBResult<Option<String>>;
 
     /// Set `key` to `value` with an expiration of `ttl`.
-    async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> Result<()>;
+    async fn set_ex(&self, key: &str, value: &str, ttl: &Duration) -> MemoryDBResult<()>;
 
     /// Delete `key`. Returns whether the key existed.
     ///
     /// An expired key counts as non-existent.
-    async fn del(&self, key: &str) -> Result<bool>;
+    async fn del(&self, key: &str) -> MemoryDBResult<bool>;
 
     /// Set the TTL of `key` to `ttl`. Returns whether the key exists.
     /// A zero `ttl` deletes the key.
-    async fn expire(&self, key: &str, ttl: &Duration) -> Result<bool>;
+    async fn expire(&self, key: &str, ttl: &Duration) -> MemoryDBResult<bool>;
 
     /// Remove all keys from the database.
     ///
     /// # Warning
     /// On shared backends such as Redis this flushes the whole database (`FLUSHDB`).
-    async fn flush(&self) -> Result<()>;
+    async fn flush(&self) -> MemoryDBResult<()>;
 
     /// Get all keys matching the glob `key` pattern (e.g. `prefix*`).
-    async fn keys(&self, key: &str) -> Result<Vec<String>>;
+    async fn keys(&self, key: &str) -> MemoryDBResult<Vec<String>>;
 
     /// Delete multiple keys. Returns the number of keys deleted.
     ///
     /// Expired keys count as non-existent and are not included in the count.
-    async fn dels(&self, keys: &[String]) -> Result<u64>;
+    async fn dels(&self, keys: &[String]) -> MemoryDBResult<u64>;
 
     /// Get the remaining TTL of `key`, or `None` if the key does not exist or has no TTL.
-    async fn ttl(&self, key: &str) -> Result<Option<Duration>>;
+    async fn ttl(&self, key: &str) -> MemoryDBResult<Option<Duration>>;
 }
 
 #[cfg(test)]
