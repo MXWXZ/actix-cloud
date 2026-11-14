@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/actix-cloud?style=flat-square)](https://docs.rs/actix-cloud/latest)
 ![license](https://img.shields.io/github/license/mxwxz/actix-cloud?style=flat-square)
 
-**English** | [简体中文](README_cn.md)
+**English** | [简体中文](README_CN.md)
 
 Actix Cloud is an all-in-one web framework based on [Actix Web](https://crates.io/crates/actix-web).
 
@@ -25,28 +25,28 @@ actix-cloud = { version = "0.8", default-features = false, features = [
 
 ## Features
 
-| Feature | Default | Description |
-| --- | --- | --- |
-| [logger](#logger) | yes | Tracing-based logger with color and JSON writers |
-| [i18n](#i18n) | yes | Compile-time locales, `t!`, translated responses (enables `state`, `request`) |
-| [security](#security) | yes | Security headers middleware |
-| [state](#state) | yes | `GlobalState` and `ServerHandle` |
-| [request](#request) | yes | Per-request `Extension` (language, real IP, trace id) |
-| [traceid](#traceid) | yes | Trace ids via `tracing-actix-web` |
-| [auth](#auth) | yes | `Checker` auth and `build_router` (feature `router`) |
-| [session](#session) | yes | Session middleware backed by `memorydb` |
-| [csrf](#csrf) | yes | Double-submit CSRF checks (enables `router`) |
-| [memorydb](#memorydb-default) | via `session` | Key-value abstraction with an in-process backend |
-| [redis](#memorydb-redis) | no | Redis backend for `memorydb` |
-| [response](#response) | via `response-json` | Uniform `Response` type |
-| `response-json` | yes | JSON `JsonResponse` (enables `response`) |
-| `response-build` | no | YAML → response enum codegen for `build.rs` |
-| [config](#config) | via `config-yaml` | Re-exported `config` crate |
-| `config-yaml` / `config-json` / `config-toml` | YAML only | Configuration file formats |
-| [utils](#utils) | yes | Random strings, restart, rustls config |
-| `macros` | yes | `#[actix_cloud::main]` and compile-time `i18n!` |
-| `rustls` | yes | rustls helpers and re-export |
-| `all` | no | Enable every feature |
+| Feature                                       | Default             | Description                                                                   |
+| --------------------------------------------- | ------------------- | ----------------------------------------------------------------------------- |
+| [logger](#logger)                             | yes                 | Tracing-based logger with color and JSON writers                              |
+| [i18n](#i18n)                                 | yes                 | Compile-time locales, `t!`, translated responses (enables `state`, `request`) |
+| [security](#security)                         | yes                 | Security headers middleware                                                   |
+| [state](#state)                               | yes                 | `GlobalState` and `ServerHandle`                                              |
+| [request](#request)                           | yes                 | Per-request `Extension` (language, real IP, trace id)                         |
+| [traceid](#traceid)                           | yes                 | Trace ids via `tracing-actix-web`                                             |
+| [auth](#auth)                                 | yes                 | `Checker` auth and `build_router` (feature `router`)                          |
+| [session](#session)                           | yes                 | Session middleware backed by `memorydb`                                       |
+| [csrf](#csrf)                                 | yes                 | Double-submit CSRF checks (enables `router`)                                  |
+| [memorydb](#memorydb-default)                 | via `session`       | Key-value abstraction with an in-process backend                              |
+| [redis](#memorydb-redis)                      | no                  | Redis backend for `memorydb`                                                  |
+| [response](#response)                         | via `response-json` | Uniform `Response` type                                                       |
+| `response-json`                               | yes                 | JSON `JsonResponse` (enables `response`)                                      |
+| `response-build`                              | no                  | YAML → response enum codegen for `build.rs`                                   |
+| [config](#config)                             | via `config-yaml`   | Re-exported `config` crate                                                    |
+| `config-yaml` / `config-json` / `config-toml` | YAML only           | Configuration file formats                                                    |
+| [utils](#utils)                               | yes                 | Random strings, restart, rustls config                                        |
+| `macros`                                      | yes                 | `#[actix_cloud::main]` and compile-time `i18n!`                               |
+| `rustls`                                      | yes                 | rustls helpers and re-export                                                  |
+| `all`                                         | no                  | Enable every feature                                                          |
 
 ## Quick start
 
@@ -149,15 +149,15 @@ let (logger, guard) = LoggerBuilder::new()
 
 Builder options:
 
-| Method | Description |
-| --- | --- |
-| `level(Level)` | Max log level, default `INFO`. |
-| `json()` | Use the JSON writer instead of the colorful one. |
-| `filename()` / `line_number()` | Include the event's file / line in each entry. |
-| `filter(Fn(&LogItem) -> bool)` | Return `false` to drop a log entry. |
-| `transformer(Fn(LogItem) -> LogItem)` | Rewrite entries on the fly. |
-| `handler(Fn(&Map) -> Future<bool>)` | Raw JSON handler invoked first; return `false` to skip normal processing. |
-| `json_writer` / `color_writer` | Custom writers (`Fn(LogItem, Box<dyn Write>) -> io::Result<()>`). |
+| Method                                | Description                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------- |
+| `level(Level)`                        | Max log level, default `INFO`.                                            |
+| `json()`                              | Use the JSON writer instead of the colorful one.                          |
+| `filename()` / `line_number()`        | Include the event's file / line in each entry.                            |
+| `filter(Fn(&LogItem) -> bool)`        | Return `false` to drop a log entry.                                       |
+| `transformer(Fn(LogItem) -> LogItem)` | Rewrite entries on the fly.                                               |
+| `handler(Fn(&Map) -> Future<bool>)`   | Raw JSON handler invoked first; return `false` to skip normal processing. |
+| `json_writer` / `color_writer`        | Custom writers (`Fn(LogItem, Box<dyn Write>) -> io::Result<()>`).         |
 
 Wait until every queued log entry has been written out:
 
@@ -175,9 +175,9 @@ let home = expect_fatal!(std::env::var("HOME"), "HOME is not set");
 
 Reserved fields, overridable in log records:
 
-| Field | Description |
-| --- | --- |
-| `_time` | Timestamp in microseconds, overrides the log timestamp. |
+| Field                        | Description                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| `_time`                      | Timestamp in microseconds, overrides the log timestamp.                                          |
 | `_filename` / `_line_number` | Override the recorded file / line (only applied when `filename()` / `line_number()` is enabled). |
 
 ### i18n

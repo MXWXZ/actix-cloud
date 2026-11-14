@@ -38,8 +38,7 @@ use crate::memorydb::MemoryDB;
 /// Use [`SessionMiddleware::new`] to initialize the session framework using the default parameters.
 /// To create a new instance of [`SessionMiddleware`] you need to provide:
 ///
-/// - an instance of the session storage backend you wish to use (i.e. an implementation of
-///   [`SessionStore`]);
+/// - a [`MemoryDB`] instance used as the session storage backend;
 /// - a secret key, to sign or encrypt the content of client-side session cookie.
 ///
 /// # Storage capacity
@@ -70,8 +69,7 @@ impl SessionMiddleware {
     /// parameters.
     ///
     /// To create a new instance of [`SessionMiddleware`] you need to provide:
-    /// - an instance of the session storage backend you wish to use (i.e. an implementation of
-    ///   [`SessionStore`]);
+    /// - a [`MemoryDB`] instance used as the session storage backend;
     /// - a secret key, to sign or encrypt the content of client-side session cookie.
     pub fn new(client: Arc<dyn MemoryDB>, key: Key) -> Self {
         Self::builder(client, key).build()
@@ -80,8 +78,7 @@ impl SessionMiddleware {
     /// A fluent API to configure [`SessionMiddleware`].
     ///
     /// It takes as input the two required inputs to create a new instance of [`SessionMiddleware`]:
-    /// - an instance of the session storage backend you wish to use (i.e. an implementation of
-    ///   [`SessionStore`]);
+    /// - a [`MemoryDB`] instance used as the session storage backend;
     /// - a secret key, to sign or encrypt the content of client-side session cookie.
     pub fn builder(client: Arc<dyn MemoryDB>, key: Key) -> SessionMiddlewareBuilder {
         SessionMiddlewareBuilder::new(client, config::default_configuration(key))

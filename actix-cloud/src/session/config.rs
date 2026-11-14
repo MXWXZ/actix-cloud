@@ -8,13 +8,13 @@ use crate::memorydb::MemoryDB;
 
 use super::{storage::SessionStore, SessionMiddleware};
 
-/// A [session lifecycle](SessionLifecycle) strategy where the session cookie will be [persistent].
+/// A session lifecycle strategy where the session cookie will be [persistent].
 ///
 /// Persistent cookies have a pre-determined expiration, specified via the `Max-Age` or `Expires`
 /// attribute. They do not disappear when the current browser session ends.
 ///
-/// Due to its `Into<SessionLifecycle>` implementation, a `PersistentSession` can be passed directly
-/// to [`SessionMiddlewareBuilder::session_lifecycle()`].
+/// A `PersistentSession` can be passed directly to
+/// [`SessionMiddlewareBuilder::session_lifecycle()`].
 ///
 /// # Examples
 /// ```
@@ -79,9 +79,9 @@ impl Default for PersistentSession {
 
 /// Configuration for which events should trigger an extension of the time-to-live for your session.
 ///
-/// If you are using a [`BrowserSession`], `TtlExtensionPolicy` controls how often the TTL of the
-/// session state should be refreshed. The browser is in control of the lifecycle of the session
-/// cookie.
+/// If the session cookie has no explicit lifetime (the default), `TtlExtensionPolicy` controls how
+/// often the TTL of the session state should be refreshed. The browser is in control of the
+/// lifecycle of the session cookie.
 ///
 /// If you are using a [`PersistentSession`], `TtlExtensionPolicy` controls both the expiration of
 /// the session cookie and the TTL of the session state on the storage backend.
@@ -214,7 +214,7 @@ impl SessionMiddlewareBuilder {
     /// # Default
     /// By default, the cookie content is encrypted. Encrypted was chosen instead of signed as
     /// default because it reduces the chances of sensitive information being exposed in the session
-    /// key by accident, regardless of [`SessionStore`] implementation you chose to use.
+    /// key by accident, regardless of the `MemoryDB` backend you chose to use.
     ///
     /// For example, if you are using cookie-based storage, you definitely want the cookie content
     /// to be encrypted—the whole session state is embedded in the cookie! If you are using

@@ -150,9 +150,9 @@ pub trait MemoryDB: Send + Sync {
 /// Conformance tests shared by every backend.
 ///
 /// Each `test_*` entry point runs the same assertions against the default backend and,
-/// with the `redis` feature enabled, against Redis at `redis://127.0.0.1:6379/0`.
-/// Because of that dependency these tests are excluded by `make test`; use
-/// `make test_dev` when a local Redis is available.
+/// with the `redis` feature enabled, a matching `test_*_redis` entry point runs them
+/// against Redis at `redis://127.0.0.1:6379/0`. `make test` skips the `_redis` cases;
+/// use `make test_dev` when a local Redis is available.
 mod tests {
     use std::time::Duration;
     use tokio::time::sleep;
@@ -181,11 +181,15 @@ mod tests {
 
     // Run the same conformance body against every available backend.
     macro_rules! backend_test {
-        ($test:ident, $body:ident) => {
+        ($test:ident, $test_redis:ident, $body:ident) => {
             #[tokio::test]
             async fn $test() {
                 $body("default", setup_default()).await;
-                #[cfg(feature = "redis")]
+            }
+
+            #[cfg(feature = "redis")]
+            #[tokio::test]
+            async fn $test_redis() {
                 $body("redis", setup_redis().await).await;
             }
         };
@@ -193,7 +197,7 @@ mod tests {
 
     // --- Basic operations ---
 
-    backend_test!(test_normal, test_normal_fn);
+    backend_test!(test_normal, test_normal_redis, test_normal_fn);
 
     async fn test_normal_fn(name: &str, r: impl MemoryDB) {
         let key = "_actix_cloud_key1";
@@ -221,7 +225,11 @@ mod tests {
         assert_eq!(r.ttl(key).await.unwrap(), None);
     }
 
-    backend_test!(test_set_clears_ttl, test_set_clears_ttl_fn);
+    backend_test!(
+        test_set_clears_ttl,
+        test_set_clears_ttl_redis,
+        test_set_clears_ttl_fn
+    );
 
     async fn test_set_clears_ttl_fn(name: &str, r: impl MemoryDB) {
         let key = "_actix_cloud_okey";
@@ -241,7 +249,11 @@ mod tests {
         assert!(r.del(key).await.unwrap());
     }
 
-    backend_test!(test_missing_keys, test_missing_keys_fn);
+    backend_test!(
+        test_missing_keys,
+        test_missing_keys_redis,
+        test_missing_keys_fn
+    );
 
     async fn test_missing_keys_fn(name: &str, r: impl MemoryDB) {
         let key = "_actix_cloud_mkey";
@@ -261,7 +273,11 @@ mod tests {
         assert!(r.keys(key).await.unwrap().is_empty());
     }
 
-    backend_test!(test_empty_key_and_value, test_empty_key_and_value_fn);
+    backend_test!(
+        test_empty_key_and_value,
+        test_empty_key_and_value_redis,
+        test_empty_key_and_value_fn
+    );
 
     async fn test_empty_key_and_value_fn(name: &str, r: impl MemoryDB) {
         println!("Backend: {}", name);
@@ -282,7 +298,11 @@ mod tests {
         assert!(r.del(key).await.unwrap());
     }
 
-    backend_test!(test_unicode_payload, test_unicode_payload_fn);
+    backend_test!(
+        test_unicode_payload,
+        test_unicode_payload_redis,
+        test_unicode_payload_fn
+    );
 
     async fn test_unicode_payload_fn(name: &str, r: impl MemoryDB) {
         let key = "_actix_cloud_ükey";
@@ -301,7 +321,7 @@ mod tests {
         assert!(r.del(key).await.unwrap());
     }
 
-    backend_test!(test_dels_batch, test_dels_batch_fn);
+    backend_test!(test_dels_batch, test_dels_batch_redis, test_dels_batch_fn);
 
     async fn test_dels_batch_fn(name: &str, r: impl MemoryDB) {
         let key1 = "_actix_cloud_dkey1";
@@ -330,7 +350,7 @@ mod tests {
         assert!(r.del(key2).await.unwrap());
     }
 
-    backend_test!(test_rename, test_rename_fn);
+    backend_test!(test_rename, test_rename_redis, test_rename_fn);
 
     async fn test_rename_fn(name: &str, r: impl MemoryDB) {
         let src = "_actix_cloud_rename_src";
@@ -382,7 +402,7 @@ mod tests {
 
     // --- Expiration ---
 
-    backend_test!(test_ex, test_ex_fn);
+    backend_test!(test_ex, test_ex_redis, test_ex_fn);
 
     async fn test_ex_fn(name: &str, r: impl MemoryDB) {
         let key = "_actix_cloud_key2";
@@ -435,7 +455,7 @@ mod tests {
         assert!(r.del(key).await.unwrap());
     }
 
-    backend_test!(test_expire, test_expire_fn);
+    backend_test!(test_expire, test_expire_redis, test_expire_fn);
 
     async fn test_expire_fn(name: &str, r: impl MemoryDB) {
         let key = "_actix_cloud_key3";
@@ -471,7 +491,7 @@ mod tests {
         assert!(!r.expire(key, &Duration::ZERO).await.unwrap());
     }
 
-    backend_test!(test_zero_ttl, test_zero_ttl_fn);
+    backend_test!(test_zero_ttl, test_zero_ttl_redis, test_zero_ttl_fn);
 
     async fn test_zero_ttl_fn(name: &str, r: impl MemoryDB) {
         let key = "_actix_cloud_zkey";
@@ -520,7 +540,11 @@ mod tests {
         assert_eq!(r.get(key).await.unwrap(), None);
     }
 
-    backend_test!(test_expired_access, test_expired_access_fn);
+    backend_test!(
+        test_expired_access,
+        test_expired_access_redis,
+        test_expired_access_fn
+    );
 
     async fn test_expired_access_fn(name: &str, r: impl MemoryDB) {
         let key = "_actix_cloud_xkey";
@@ -559,7 +583,11 @@ mod tests {
         assert!(r.del(key).await.unwrap());
     }
 
-    backend_test!(test_ttl_out_of_range, test_ttl_out_of_range_fn);
+    backend_test!(
+        test_ttl_out_of_range,
+        test_ttl_out_of_range_redis,
+        test_ttl_out_of_range_fn
+    );
 
     async fn test_ttl_out_of_range_fn(name: &str, r: impl MemoryDB) {
         let key = "_actix_cloud_tkey";
@@ -600,7 +628,11 @@ mod tests {
         assert!(r.del(key).await.unwrap());
     }
 
-    backend_test!(test_del_expired, test_del_expired_fn);
+    backend_test!(
+        test_del_expired,
+        test_del_expired_redis,
+        test_del_expired_fn
+    );
 
     async fn test_del_expired_fn(name: &str, r: impl MemoryDB) {
         let key = "_actix_cloud_key4";
@@ -651,7 +683,7 @@ mod tests {
 
     // --- Keys ---
 
-    backend_test!(test_batch, test_batch_fn);
+    backend_test!(test_batch, test_batch_redis, test_batch_fn);
 
     async fn test_batch_fn(name: &str, r: impl MemoryDB) {
         let key1 = "_actix_cloud_bkey1";
@@ -681,7 +713,11 @@ mod tests {
         assert!(r.keys("_actix_cl?ud_bkey*").await.unwrap().is_empty());
     }
 
-    backend_test!(test_keys_portable_subset, test_keys_portable_subset_fn);
+    backend_test!(
+        test_keys_portable_subset,
+        test_keys_portable_subset_redis,
+        test_keys_portable_subset_fn
+    );
 
     async fn test_keys_portable_subset_fn(name: &str, r: impl MemoryDB) {
         let keys = [
@@ -724,7 +760,11 @@ mod tests {
         }
     }
 
-    backend_test!(test_keys_hides_expired, test_keys_hides_expired_fn);
+    backend_test!(
+        test_keys_hides_expired,
+        test_keys_hides_expired_redis,
+        test_keys_hides_expired_fn
+    );
 
     async fn test_keys_hides_expired_fn(name: &str, r: impl MemoryDB) {
         let live = "_actix_cloud_gkey_live";
@@ -748,7 +788,11 @@ mod tests {
         assert!(r.del(live).await.unwrap());
     }
 
-    backend_test!(test_keys_invalid_pattern, test_keys_invalid_pattern_fn);
+    backend_test!(
+        test_keys_invalid_pattern,
+        test_keys_invalid_pattern_redis,
+        test_keys_invalid_pattern_fn
+    );
 
     async fn test_keys_invalid_pattern_fn(name: &str, r: impl MemoryDB) {
         println!("Backend: {}", name);
@@ -759,7 +803,11 @@ mod tests {
         ));
     }
 
-    backend_test!(test_keys_pagination, test_keys_pagination_fn);
+    backend_test!(
+        test_keys_pagination,
+        test_keys_pagination_redis,
+        test_keys_pagination_fn
+    );
 
     async fn test_keys_pagination_fn(name: &str, r: impl MemoryDB) {
         // More keys than the Redis SCAN page size, so the cursor has to be followed
@@ -793,7 +841,11 @@ mod tests {
     #[tokio::test]
     async fn test_flush() {
         test_flush_fn("default", setup_default()).await;
-        #[cfg(feature = "redis")]
+    }
+
+    #[cfg(feature = "redis")]
+    #[tokio::test]
+    async fn test_flush_redis() {
         test_flush_fn("redis", setup_redis_isolated().await).await;
     }
 

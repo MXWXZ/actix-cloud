@@ -1,43 +1,128 @@
-name: Check
+name: Release
 
 on:
-  workflow_dispatch:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   check:
     name: Check code
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Cache cargo & target directories
-        uses: Swatinem/rust-cache@v2
-      - name: Check
-        run: make check
-      - name: Run tests
-        run: make test
+    uses: ./.github/workflows/ci.yml
 
   publish:
+    name: Publish crates
     needs: check
-    name: Publish crate
+    # workflow_dispatch on a branch must not publish anything.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-      - name: Login
-        run: cargo login ${{ secrets.CRATES_IO_TOKEN }}
-      - name: Push to crate.io
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Verify tag matches crate version
         run: |
-          cd actix-cloud-codegen
-          cargo publish --no-verify || true
-          cd -
-          cd actix-cloud
-          cargo publish --no-verify || true
-          cd -
+          set -euo pipefail
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "actix-cloud") | .version')
+          test "v$version" = "$GITHUB_REF_NAME"
+          grep -qx "# $version" CHANGELOG.md
+
+      - name: Extract release notes
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          awk -v heading="# $version" '
+            $0 == heading { found = 1; next }
+            found && /^# / { exit }
+            found { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+
+      # Replace CRATES_IO_TOKEN with crates.io trusted publishing when the
+      # crates are configured for it: add `id-token: write` to this job and
+      # use rust-lang/crates-io-auth-action@v1 to mint a short-lived token.
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          crate_version() {
+            local name=$1 dir=$2
+            cargo metadata --manifest-path "$dir/Cargo.toml" \
+              --no-deps --format-version 1 \
+              | jq -r --arg name "$name" \
+                  '.packages[] | select(.name == $name) | .version'
+          }
+
+          is_published() {
+            curl -fsS -A "actix-cloud-release" \
+              "https://crates.io/api/v1/crates/$1/$2" >/dev/null 2>&1
+          }
+
+          # Block until the newly uploaded version is visible in the sparse
+          # index; crates.io validates dependency requirements against it.
+          wait_for_index() {
+            local name=$1 version=$2 path body
+            case ${#name} in
+              1) path="1/$name" ;;
+              2) path="2/$name" ;;
+              3) path="3/${name:0:1}/$name" ;;
+              *) path="${name:0:2}/${name:2:2}/$name" ;;
+            esac
+
+            for _ in {1..60}; do
+              body=$(curl -fsS -A "actix-cloud-release" \
+                "https://index.crates.io/$path" || true)
+              if grep -qF "\"vers\":\"$version\"" <<<"$body"; then
+                echo "$name $version is visible in the sparse index"
+                return 0
+              fi
+              sleep 5
+            done
+
+            echo "Timed out waiting for $name $version in the sparse index" >&2
+            return 1
+          }
+
+          publish_if_missing() {
+            local name=$1 dir=$2 version
+            version=$(crate_version "$name" "$dir")
+            if is_published "$name" "$version"; then
+              echo "$name $version is already published; skipping"
+              return 0
+            fi
+
+            echo "Publishing $name $version"
+            cargo publish --manifest-path "$dir/Cargo.toml" --no-verify
+            wait_for_index "$name" "$version"
+          }
+
+          main_version=$(crate_version actix-cloud actix-cloud)
+          if is_published actix-cloud "$main_version"; then
+            echo "actix-cloud $main_version is already published; nothing to do"
+          else
+            # codegen is never released on its own: publish it only when the
+            # main crate still needs a release, then wait for the index before
+            # publishing the main crate that depends on it.
+            publish_if_missing actix-cloud-codegen actix-cloud-codegen
+            publish_if_missing actix-cloud actix-cloud
+          fi
+
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           draft: true
+          body_path: RELEASE_NOTES.md
