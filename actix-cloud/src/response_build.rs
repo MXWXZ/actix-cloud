@@ -92,7 +92,8 @@ fn generate_response_in(
         if entry.file_type().is_file() {
             let file = read_to_string(entry.path())?;
             let yaml = YamlLoader::load_from_str(&file)?;
-            let doc = &yaml[0];
+            // An empty file (or one with only comments) produces no documents.
+            let doc = yaml.first().ok_or(BuildError::Format)?;
             let mut name_vec = Vec::new();
             let mut code_vec = Vec::new();
             let mut message_vec = Vec::new();
@@ -213,6 +214,16 @@ mod tests {
             generate_response_in(&out_dir, "", &fixture("invalid_format"), "out.rs").unwrap_err();
         remove_dir_all(&out_dir).unwrap();
 
+        assert!(matches!(err, BuildError::Format));
+    }
+
+    #[test]
+    fn rejects_empty_yaml_files() {
+        let out_dir = temp_dir();
+        let err = generate_response_in(&out_dir, "", &fixture("empty"), "out.rs").unwrap_err();
+        remove_dir_all(&out_dir).unwrap();
+
+        // An empty file must be a format error, not a panic.
         assert!(matches!(err, BuildError::Format));
     }
 

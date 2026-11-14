@@ -114,4 +114,58 @@ mod tests {
         let data = state(ServerHandle::default()).build();
         assert!(!*data.server.running.read());
     }
+
+    #[test]
+    fn stop_updates_the_stop_time_on_every_call() {
+        let handle = ServerHandle::default();
+
+        handle.stop(false);
+        let first = *handle.stop_time.read();
+        assert!(first.is_some());
+
+        handle.stop(true);
+        let second = *handle.stop_time.read();
+        assert!(second >= first);
+    }
+
+    #[test]
+    fn global_state_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+
+        assert_send_sync::<ServerHandle>();
+        assert_send_sync::<GlobalState>();
+    }
+
+    #[actix_web::test]
+    async fn start_and_stop_update_the_server_state() {
+        use actix_web::{web, App, HttpServer};
+
+        let server = HttpServer::new(|| App::new().route("/", web::get().to(|| async { "ok" })))
+            .workers(1)
+            .bind(("127.0.0.1", 0))
+            .expect("bind")
+            .run();
+
+        let handle = Arc::new(ServerHandle::default());
+        let runner = handle.clone();
+        let task = actix_web::rt::spawn(async move { runner.start(server).await });
+
+        // Wait for `start` to record the handle and timestamp.
+        for _ in 0..10_000 {
+            if *handle.running.read() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(*handle.running.read());
+        let start_time = *handle.start_time.read();
+        assert!(start_time > DateTime::<Utc>::default());
+
+        handle.stop(true);
+        task.await.unwrap().unwrap();
+
+        assert!(!*handle.running.read());
+        assert!(*handle.start_time.read() == start_time);
+        assert!(handle.stop_time.read().is_some());
+    }
 }

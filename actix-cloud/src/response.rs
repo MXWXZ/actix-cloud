@@ -228,21 +228,13 @@ impl<T> Response<T> {
         use actix_web::HttpMessage as _;
 
         if self.translate {
-            req.app_data::<actix_web::web::Data<crate::state::GlobalState>>()
-                .map_or_else(
-                    || self.message.clone(),
-                    |state| {
-                        if let Some(ext) = req.extensions().get::<Arc<crate::request::Extension>>()
-                        {
-                            crate::t!(state.locale, &self.message, &ext.lang)
-                        } else {
-                            self.message.clone()
-                        }
-                    },
-                )
-        } else {
-            self.message.clone()
+            if let Some(state) = req.app_data::<actix_web::web::Data<crate::state::GlobalState>>() {
+                if let Some(ext) = req.extensions().get::<Arc<crate::request::Extension>>() {
+                    return crate::t!(state.locale, &self.message, &ext.lang);
+                }
+            }
         }
+        self.message.clone()
     }
 }
 
@@ -291,17 +283,30 @@ impl actix_web::Responder for JsonResponse {
             if self.http_code == StatusCode::NO_CONTENT {
                 rsp.finish().map_into_right_body()
             } else {
-                rsp.message_body(body).unwrap().map_into_left_body()
+                match rsp.message_body(body) {
+                    Ok(rsp) => rsp.map_into_left_body(),
+                    // A builder callback may have inserted an invalid header; render
+                    // the builder error instead of panicking the worker.
+                    Err(err) => actix_web::HttpResponse::from_error(err).map_into_right_body(),
+                }
             }
         } else {
             let mut rsp = HttpResponse::build(self.http_code);
+            if !self.message.is_empty() {
+                // The message is plain text; without this, old browsers may MIME-sniff
+                // a reflected message as HTML.
+                rsp.content_type(actix_web::http::header::ContentType::plaintext());
+            }
             for builder in self.builder {
                 builder(&mut rsp);
             }
             if self.message.is_empty() {
                 rsp.finish().map_into_right_body()
             } else {
-                rsp.message_body(self.message).unwrap().map_into_left_body()
+                match rsp.message_body(self.message) {
+                    Ok(rsp) => rsp.map_into_left_body(),
+                    Err(err) => actix_web::HttpResponse::from_error(err).map_into_right_body(),
+                }
             }
         }
     }
@@ -461,13 +466,23 @@ mod tests {
             .respond_to(&req);
         let http = service_response(req, http);
         assert_eq!(http.status(), StatusCode::BAD_REQUEST);
+        // The plain-text message must not be sniffed as HTML.
+        assert_eq!(
+            http.headers()
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "text/plain; charset=utf-8"
+        );
         assert_eq!(web_test::read_body(http).await.as_ref(), b"bad request");
 
-        // An empty message produces an empty body.
+        // An empty message produces an empty body and no content type.
         let req = request();
         let http = JsonResponse::new_code(StatusCode::NOT_FOUND).respond_to(&req);
         let http = service_response(req, http);
         assert_eq!(http.status(), StatusCode::NOT_FOUND);
+        assert!(http.headers().get(header::CONTENT_TYPE).is_none());
         assert!(web_test::read_body(http).await.is_empty());
     }
 
@@ -507,5 +522,180 @@ mod tests {
         assert_eq!(http.status(), StatusCode::INTERNAL_SERVER_ERROR);
         // Error details are not leaked to the client.
         assert!(web_test::read_body(http).await.is_empty());
+    }
+
+    #[test]
+    fn response_error_accepts_common_error_types() {
+        assert_eq!(ResponseError::from("static").to_string(), "static");
+        assert_eq!(
+            ResponseError::from(String::from("owned")).to_string(),
+            "owned"
+        );
+        assert_eq!(
+            ResponseError::from(io::Error::other("io")).to_string(),
+            "io"
+        );
+
+        let boxed: Box<dyn std::error::Error + Send + Sync> = Box::new(io::Error::other("boxed"));
+        assert_eq!(ResponseError::from(boxed).to_string(), "boxed");
+    }
+
+    #[cfg(feature = "response-json")]
+    #[actix_web::test]
+    async fn redirect_sets_status_and_location() {
+        let http = JsonResponse::redirect(StatusCode::FOUND, "/next").respond_to(&request());
+
+        assert_eq!(http.status(), StatusCode::FOUND);
+        assert_eq!(
+            http.headers()
+                .get(header::LOCATION)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "/next"
+        );
+    }
+
+    #[cfg(feature = "response-json")]
+    #[actix_web::test]
+    async fn json_success_without_data_omits_the_data_key() {
+        let req = request();
+        let http = JsonResponse::new(TestCode).message("ok").respond_to(&req);
+        let http = service_response(req, http);
+
+        let body: serde_json::Value =
+            serde_json::from_slice(&web_test::read_body(http).await).unwrap();
+        assert_eq!(body, json!({"code": 42, "message": "ok"}));
+    }
+
+    #[cfg(feature = "response-json")]
+    #[actix_web::test]
+    async fn json_created_response_has_json_body() {
+        let req = request();
+        let http = JsonResponse::created(TestCode, "/items/1")
+            .message("created")
+            .respond_to(&req);
+        let http = service_response(req, http);
+
+        assert_eq!(http.status(), StatusCode::CREATED);
+        let body: serde_json::Value =
+            serde_json::from_slice(&web_test::read_body(http).await).unwrap();
+        assert_eq!(body, json!({"code": 42, "message": "created"}));
+    }
+
+    #[cfg(feature = "response-json")]
+    #[actix_web::test]
+    async fn error_responses_apply_builder_callbacks() {
+        let req = request();
+        let http = JsonResponse::new_code(StatusCode::BAD_REQUEST)
+            .message("bad")
+            .builder(|b| {
+                b.insert_header(("X-Extra", "1"));
+            })
+            .respond_to(&req);
+        let http = service_response(req, http);
+
+        assert_eq!(http.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            http.headers().get("X-Extra").unwrap().to_str().unwrap(),
+            "1"
+        );
+        assert_eq!(web_test::read_body(http).await.as_ref(), b"bad");
+    }
+
+    /// An invalid header inserted by a builder callback (e.g. an untrusted
+    /// `Location`) must produce an error response instead of panicking the worker.
+    #[cfg(feature = "response-json")]
+    #[actix_web::test]
+    async fn invalid_builder_header_does_not_panic() {
+        let http = JsonResponse::created(TestCode, "bad\r\nX-Injected: 1").respond_to(&request());
+        assert_eq!(http.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// The same applies to error responses, which also build a body.
+    #[cfg(feature = "response-json")]
+    #[actix_web::test]
+    async fn invalid_builder_header_on_error_response_does_not_panic() {
+        let http = JsonResponse::new_code(StatusCode::BAD_REQUEST)
+            .message("bad")
+            .builder(|b| {
+                b.insert_header(("X-Bad", "bad\r\nX-Injected: 1"));
+            })
+            .respond_to(&request());
+        assert_eq!(http.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[cfg(all(feature = "i18n", feature = "response-json"))]
+    #[test]
+    fn i18n_message_falls_back_without_state_or_translation() {
+        let r = JsonResponse::new(TestCode).message("hello");
+        assert_eq!(r.i18n_message(&request()), "hello");
+
+        // `new_code` disables translation.
+        let r = JsonResponse::new_code(StatusCode::BAD_REQUEST).message("raw");
+        assert_eq!(r.i18n_message(&request()), "raw");
+    }
+
+    #[cfg(all(feature = "i18n", feature = "state", feature = "request"))]
+    fn global_state(locale: crate::i18n::Locale) -> crate::state::GlobalState {
+        crate::state::GlobalState {
+            #[cfg(feature = "memorydb")]
+            memorydb: Arc::new(crate::memorydb::default::DefaultBackend::new()),
+            #[cfg(feature = "config")]
+            config: crate::config::Config::default(),
+            #[cfg(feature = "logger")]
+            logger: None,
+            locale,
+            server: Default::default(),
+        }
+    }
+
+    #[cfg(all(
+        feature = "i18n",
+        feature = "state",
+        feature = "request",
+        feature = "response-json"
+    ))]
+    #[actix_web::test]
+    async fn i18n_message_uses_the_request_locale() {
+        use actix_web::HttpMessage as _;
+
+        let locale = crate::i18n::Locale::new("en-US").add_locale(crate::map! {
+            "en-US.test.code" => "translated",
+            "zh-CN.test.code" => "已翻译"
+        });
+        let req = web_test::TestRequest::default()
+            .app_data(global_state(locale).build())
+            .to_http_request();
+        req.extensions_mut()
+            .insert(std::sync::Arc::new(crate::request::Extension {
+                start_time: chrono::Utc::now(),
+                lang: "zh-CN".to_owned(),
+                #[cfg(feature = "traceid")]
+                trace_id: String::new(),
+                real_ip: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+            }));
+
+        let r = JsonResponse::new(TestCode);
+        assert_eq!(r.i18n_message(&req), "已翻译");
+
+        // Unknown locales fall back to the default locale.
+        let req = web_test::TestRequest::default()
+            .app_data(
+                global_state(crate::i18n::Locale::new("en-US").add_locale(crate::map! {
+                    "en-US.test.code" => "translated"
+                }))
+                .build(),
+            )
+            .to_http_request();
+        req.extensions_mut()
+            .insert(std::sync::Arc::new(crate::request::Extension {
+                start_time: chrono::Utc::now(),
+                lang: "de-DE".to_owned(),
+                #[cfg(feature = "traceid")]
+                trace_id: String::new(),
+                real_ip: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+            }));
+        assert_eq!(r.i18n_message(&req), "translated");
     }
 }

@@ -38,6 +38,8 @@ pub use tokio;
 #[cfg(feature = "logger")]
 pub use tracing;
 
+#[cfg(any(feature = "csrf", feature = "session"))]
+mod cookie;
 #[cfg(feature = "csrf")]
 pub mod csrf;
 #[cfg(feature = "i18n")]

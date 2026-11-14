@@ -1,4 +1,4 @@
-// Original code are from https://crates.io/crates/actix-session
+// Original code are from https://github.com/actix/actix-extras/ commit: 2463161067789b956d8637e8101d18bfdcf7baba
 
 pub mod config;
 mod error;

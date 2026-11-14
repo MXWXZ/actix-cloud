@@ -5,6 +5,7 @@
 //! This wrapper makes it thread safe, even for FFI libraries.
 //! You can use it everywhere and freely.
 use std::{
+    borrow::Cow,
     future::Future,
     io::{self, stderr, stdout, Write},
     pin::Pin,
@@ -302,6 +303,34 @@ impl Default for LoggerBuilder {
     }
 }
 
+/// Escape control characters in untrusted text for terminal output.
+///
+/// Printable text, including non-ASCII characters, is kept as-is. JSON escaping
+/// libraries stop at C0 controls, but terminals in UTF-8 mode also interpret C1
+/// controls (e.g. `U+009B` as CSI), so every `char::is_control` character is escaped.
+///
+/// ```
+/// use actix_cloud::logger::escape_control;
+///
+/// assert_eq!(escape_control("a\nb"), "a\\nb");
+/// assert_eq!(escape_control("plain 文本"), "plain 文本");
+/// assert_eq!(escape_control("\u{9b}[31mred"), "\\u{9b}[31mred");
+/// ```
+pub fn escape_control(s: &str) -> Cow<'_, str> {
+    if !s.chars().any(char::is_control) {
+        return Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    Cow::Owned(out)
+}
+
 impl LoggerBuilder {
     /// Return colored string of `level`.
     ///
@@ -340,17 +369,24 @@ impl LoggerBuilder {
                 .bright_black()
                 .to_string();
         }
-        buf += &format!("{} {}", ":".bright_black(), item.message);
+        // The message and field/span values can carry untrusted data. Targets, file
+        // names and field names come from tracing metadata (module paths and
+        // identifiers).
+        buf += &format!("{} {}", ":".bright_black(), escape_control(&item.message));
         for (k, v) in &item.fields {
             if !k.starts_with("log.") {
-                buf += &format!(" field.{k}={v}").bright_black().to_string();
+                buf += &format!(" field.{k}={}", escape_control(&v.to_string()))
+                    .bright_black()
+                    .to_string();
             }
         }
         for (k, v) in item.span {
             if (k == "http.method" || k == "http.target")
                 || (!k.starts_with("http.") && !k.starts_with("otel.") && k != "name")
             {
-                buf += &format!(" span.{k}={v}").bright_black().to_string();
+                buf += &format!(" span.{k}={}", escape_control(&v.to_string()))
+                    .bright_black()
+                    .to_string();
             }
         }
 
@@ -646,5 +682,309 @@ mod tests {
 
         // Non-JSON input is reported as a write error.
         assert!(io::Write::write(&mut writer, b"not json").is_err());
+        assert!(io::Write::flush(&mut writer).is_ok());
+    }
+
+    #[test]
+    fn log_item_handles_malformed_fields() {
+        let map = serde_json::json!({
+            "target": 1,
+            "level": "NOT_A_LEVEL",
+            "filename": 2,
+            "line_number": "not a number",
+            "fields": {"message": 3},
+            "span": []
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let item = LogItem::from_json(map);
+        assert_eq!(item.level, Level::ERROR);
+        assert_eq!(item.target, "");
+        assert_eq!(item.message, "");
+        assert!(item.filename.is_none());
+        assert!(item.line_number.is_none());
+        assert!(item.fields.is_empty());
+        assert!(item.span.is_empty());
+    }
+
+    fn item() -> LogItem {
+        let mut fields = Map::new();
+        fields.insert("visible".to_owned(), serde_json::json!(1));
+        fields.insert("log.internal".to_owned(), serde_json::json!("hidden"));
+
+        let mut span = Map::new();
+        span.insert("http.method".to_owned(), serde_json::json!("GET"));
+        span.insert("http.target".to_owned(), serde_json::json!("/"));
+        span.insert("http.status_code".to_owned(), serde_json::json!(200));
+        span.insert("otel.trace_id".to_owned(), serde_json::json!("id"));
+        span.insert("name".to_owned(), serde_json::json!("span"));
+        span.insert("custom".to_owned(), serde_json::json!("v"));
+
+        LogItem {
+            time: serde_json::json!("2020-01-01 00:00:00.000000"),
+            level: Level::INFO,
+            message: "hello".to_owned(),
+            target: "target".to_owned(),
+            fields,
+            span,
+            filename: Some("src/main.rs".to_owned()),
+            line_number: Some(42),
+        }
+    }
+
+    /// `Box<dyn Write>` requires a `'static` writer, so share the buffer instead of
+    /// borrowing it.
+    #[derive(Clone, Default)]
+    struct SharedBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Write for SharedBuf {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl SharedBuf {
+        fn text(&self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        }
+    }
+
+    #[test]
+    fn default_json_writer_emits_one_json_line() {
+        let buf = SharedBuf::default();
+        LoggerBuilder::default_json_writer(item(), Box::new(buf.clone())).unwrap();
+
+        let text = buf.text();
+        assert!(text.ends_with('\n'));
+        let value: Value = serde_json::from_str(text.trim_end()).unwrap();
+        assert_eq!(value["level"], "INFO");
+        assert_eq!(value["message"], "hello");
+        assert_eq!(value["target"], "target");
+        assert_eq!(value["filename"], "src/main.rs");
+        assert_eq!(value["line_number"], 42);
+        assert_eq!(value["fields"]["visible"], 1);
+        assert_eq!(value["span"]["http.method"], "GET");
+    }
+
+    #[test]
+    fn json_writer_escapes_log_injection_attempts() {
+        let mut item = item();
+        item.message = "ok\nforged: entry".to_owned();
+        item.fields
+            .insert("user".to_owned(), serde_json::json!("a\r\nforged"));
+        item.fields
+            .insert("ansi".to_owned(), serde_json::json!("\u{1b}[31mred"));
+
+        let buf = SharedBuf::default();
+        LoggerBuilder::default_json_writer(item, Box::new(buf.clone())).unwrap();
+
+        let text = buf.text();
+        // Only the writer's own trailing newline may appear outside the JSON string.
+        assert_eq!(text.matches('\n').count(), 1);
+        assert!(!text.contains('\r'));
+        assert!(!text.contains('\u{1b}'));
+
+        let value: Value = serde_json::from_str(text.trim_end()).unwrap();
+        assert_eq!(value["message"], "ok\nforged: entry");
+    }
+
+    #[test]
+    fn default_color_writer_filters_internal_fields() {
+        let buf = SharedBuf::default();
+        LoggerBuilder::default_color_writer(item(), Box::new(buf.clone())).unwrap();
+
+        let text = buf.text();
+        assert!(text.contains("INFO"));
+        assert!(text.contains("target"));
+        assert!(text.contains("src/main.rs:42"));
+        assert!(text.contains("hello"));
+        assert!(text.contains("field.visible=1"));
+        assert!(!text.contains("log.internal"));
+        assert!(text.contains("span.http.method=\"GET\""));
+        assert!(text.contains("span.http.target=\"/\""));
+        assert!(text.contains("span.custom=\"v\""));
+        assert!(!text.contains("http.status_code"));
+        assert!(!text.contains("otel.trace_id"));
+        assert!(!text.contains("span.name="));
+    }
+
+    #[test]
+    fn default_color_writer_escapes_control_characters() {
+        let mut item = item();
+        item.message = "ok\nforged: entry\u{1b}[31mred\u{9b}[32mgreen".to_owned();
+        item.fields
+            .insert("user".to_owned(), serde_json::json!("x\n\u{1b}\u{9b}y"));
+        item.span
+            .insert("custom".to_owned(), serde_json::json!("z\u{9b}"));
+
+        let buf = SharedBuf::default();
+        LoggerBuilder::default_color_writer(item, Box::new(buf.clone())).unwrap();
+
+        let text = buf.text();
+        // Only the writer's own trailing newline remains.
+        assert_eq!(text.matches('\n').count(), 1);
+        assert!(!text.contains('\r'));
+        // Injected C0 and C1 escape sequences are rendered literally.
+        assert!(!text.contains("\u{1b}[31m"));
+        assert!(!text.contains('\u{9b}'), "raw C1 leaked: {text}");
+        assert!(text.contains("ok\\nforged: entry\\u{1b}[31mred\\u{9b}[32mgreen"));
+        // Field and span values are escaped as well (serde_json already escapes C0
+        // inside a JSON string; the raw C1 must be handled here).
+        assert!(
+            text.contains("field.user=\"x\\n\\u001b\\u{9b}y\""),
+            "{text}"
+        );
+        assert!(text.contains("span.custom=\"z\\u{9b}\""), "{text}");
+    }
+
+    #[test]
+    fn escape_control_keeps_printable_text() {
+        assert_eq!(escape_control("plain 文本"), "plain 文本");
+        assert_eq!(escape_control("emoji 🦀"), "emoji 🦀");
+        assert_eq!(escape_control("a\tb"), "a\\tb");
+        assert_eq!(escape_control("a\u{7f}b"), "a\\u{7f}b");
+        // U+00A0 is printable, not a control character.
+        assert_eq!(escape_control("\u{a0}"), "\u{a0}");
+    }
+
+    #[test]
+    fn escape_control_escapes_c1_controls() {
+        // C1 controls are encoded as `0xC2 0x80..=0x9F`; terminals in UTF-8 mode
+        // may interpret U+009B as an 8-bit CSI.
+        assert_eq!(escape_control("\u{9b}"), "\\u{9b}");
+        assert_eq!(escape_control("a\u{9b}[31mb"), "a\\u{9b}[31mb");
+        assert_eq!(escape_control("\u{80}"), "\\u{80}");
+        assert_eq!(escape_control("\u{9f}"), "\\u{9f}");
+    }
+
+    #[test]
+    fn escape_control_escapes_every_control_character() {
+        for c in (0..=0x10FFFF).filter_map(char::from_u32) {
+            if !c.is_control() {
+                continue;
+            }
+            let s = c.to_string();
+            let escaped = escape_control(&s);
+            assert!(
+                !escaped.chars().any(char::is_control),
+                "U+{:04X} was not escaped",
+                c as u32
+            );
+        }
+    }
+
+    #[test]
+    fn fatal_macros_pass_through_ok_values() {
+        assert_eq!(crate::unwrap_fatal!(Ok::<_, io::Error>(3)), 3);
+        assert_eq!(crate::expect_fatal!(Ok::<_, io::Error>(4), "message"), 4);
+    }
+
+    #[test]
+    fn logger_pipeline_applies_all_stages_and_reserved_fields() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, Mutex,
+        };
+
+        let captured: Arc<Mutex<Vec<LogItem>>> = Arc::new(Mutex::new(Vec::new()));
+        let handler_seen = Arc::new(AtomicBool::new(false));
+        let captured_in_writer = captured.clone();
+        let handler_seen_clone = handler_seen.clone();
+
+        let builder = LoggerBuilder::new()
+            .level(Level::TRACE)
+            .filename()
+            .line_number()
+            .handler(move |map| {
+                handler_seen_clone.store(true, Ordering::SeqCst);
+                let drop_it = map
+                    .get("fields")
+                    .and_then(|fields| fields.get("message"))
+                    .and_then(Value::as_str)
+                    == Some("handler-drop");
+                let fut: Pin<Box<dyn Future<Output = bool>>> = Box::pin(async move { !drop_it });
+                fut
+            })
+            .filter(|item| item.message != "filter-drop")
+            .transformer(|mut item| {
+                item.message.push('!');
+                item
+            })
+            .color_writer(Box::new(move |item, _| {
+                captured_in_writer.lock().unwrap().push(item);
+                Ok(())
+            }));
+
+        let (logger, guard) = builder.start();
+
+        // Raw plugin-style map with reserved time/location overrides.
+        logger
+            .sender()
+            .send(
+                serde_json::json!({
+                    "level": "INFO",
+                    "target": "plugin",
+                    "fields": {
+                        "message": "raw",
+                        "_time": 1_000_000,
+                        "_filename": "virtual.rs",
+                        "_line_number": 7,
+                        "extra": 1
+                    },
+                    "span": {"http.method": "GET"}
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            )
+            .unwrap();
+
+        tracing::info!("live");
+        tracing::info!("filter-drop");
+        logger
+            .sender()
+            .send(
+                serde_json::json!({
+                    "level": "INFO",
+                    "fields": {"message": "handler-drop"}
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            )
+            .unwrap();
+
+        crate::logger::flush();
+        drop(guard);
+
+        assert!(handler_seen.load(Ordering::SeqCst));
+        let items = captured.lock().unwrap();
+
+        let raw = items
+            .iter()
+            .find(|item| item.message.starts_with("raw"))
+            .expect("raw item");
+        assert_eq!(raw.message, "raw!");
+        assert_eq!(raw.target, "plugin");
+        assert_eq!(raw.filename.as_deref(), Some("virtual.rs"));
+        assert_eq!(raw.line_number, Some(7));
+        assert!(raw.time.as_str().unwrap().ends_with(".000000"));
+        assert_eq!(raw.fields.get("extra"), Some(&serde_json::json!(1)));
+        assert_eq!(raw.span.get("http.method"), Some(&serde_json::json!("GET")));
+
+        assert!(items.iter().any(|item| item.message == "live!"));
+        assert!(!items
+            .iter()
+            .any(|item| item.message.contains("filter-drop")));
+        assert!(!items
+            .iter()
+            .any(|item| item.message.contains("handler-drop")));
     }
 }

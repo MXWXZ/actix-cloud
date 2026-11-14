@@ -96,6 +96,13 @@ impl Display for StrictTransportSecurity {
 }
 
 /// Security headers applied to every response by [`SecurityHeader::build`].
+///
+/// # Strict-Transport-Security
+///
+/// HSTS is **opt-in**: [`Default`] leaves it unset because sending it over plain HTTP
+/// would lock clients out of the site. Call [`SecurityHeader::set_default_hsts`] on
+/// HTTPS deployments; it sets `max-age=31536000; includeSubDomains; preload`. Only use
+/// `preload` once you are ready for the domain to be added to browser preload lists.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct SecurityHeader {
@@ -252,6 +259,154 @@ mod tests {
                 .to_str()
                 .unwrap(),
             "max-age=31536000; includeSubDomains; preload"
+        );
+    }
+
+    #[actix_web::test]
+    async fn default_content_security_policy_is_applied() {
+        let rsp = headers_of(SecurityHeader::default()).await;
+
+        assert_eq!(
+            rsp.headers()
+                .get("Content-Security-Policy")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "default-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        );
+    }
+
+    #[actix_web::test]
+    async fn custom_configuration_is_applied() {
+        let security = SecurityHeader {
+            referer_policy: RefererPolicy::NoReferrer,
+            x_frame_options: XFrameOptions::SameOrigin,
+            cross_origin_opener_policy: CrossOriginOpenerPolicy::UnsafeNone,
+            content_security_policy: "default-src 'self'".to_owned(),
+            strict_transport_security: Some(StrictTransportSecurity::MaxAge(60)),
+        };
+
+        let rsp = headers_of(security).await;
+
+        assert_eq!(
+            rsp.headers()
+                .get("Referrer-Policy")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "no-referrer"
+        );
+        assert_eq!(
+            rsp.headers()
+                .get("X-Frame-Options")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "SAMEORIGIN"
+        );
+        assert_eq!(
+            rsp.headers()
+                .get("Cross-Origin-Opener-Policy")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "unsafe-none"
+        );
+        assert_eq!(
+            rsp.headers()
+                .get("Content-Security-Policy")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "default-src 'self'"
+        );
+        assert_eq!(
+            rsp.headers()
+                .get("Strict-Transport-Security")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "max-age=60"
+        );
+    }
+
+    #[actix_web::test]
+    async fn handler_headers_take_precedence() {
+        let app = web_test::init_service(App::new().wrap(SecurityHeader::default().build()).route(
+            "/",
+            web::get().to(|| async {
+                HttpResponse::Ok()
+                    .insert_header(("Referrer-Policy", "custom"))
+                    .finish()
+            }),
+        ))
+        .await;
+        let rsp =
+            web_test::call_service(&app, web_test::TestRequest::get().uri("/").to_request()).await;
+
+        assert_eq!(
+            rsp.headers()
+                .get("Referrer-Policy")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "custom"
+        );
+        // Other headers are still added.
+        assert_eq!(
+            rsp.headers()
+                .get("X-Frame-Options")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "DENY"
+        );
+    }
+
+    #[actix_web::test]
+    async fn unmatched_routes_get_the_headers() {
+        let app = web_test::init_service(
+            App::new()
+                .wrap(SecurityHeader::default().build())
+                .route("/", web::get().to(|| async { HttpResponse::Ok().finish() })),
+        )
+        .await;
+        let rsp = web_test::call_service(
+            &app,
+            web_test::TestRequest::get().uri("/missing").to_request(),
+        )
+        .await;
+
+        assert_eq!(rsp.status(), actix_web::http::StatusCode::NOT_FOUND);
+        assert!(rsp.headers().contains_key("Content-Security-Policy"));
+        assert_eq!(
+            rsp.headers()
+                .get("X-Content-Type-Options")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "nosniff"
+        );
+    }
+
+    #[actix_web::test]
+    async fn error_responses_also_get_the_headers() {
+        let app = web_test::init_service(App::new().wrap(SecurityHeader::default().build()).route(
+            "/",
+            web::get().to(|| async { HttpResponse::InternalServerError().finish() }),
+        ))
+        .await;
+        let rsp =
+            web_test::call_service(&app, web_test::TestRequest::get().uri("/").to_request()).await;
+
+        assert_eq!(rsp.status().as_u16(), 500);
+        assert_eq!(
+            rsp.headers()
+                .get("X-Content-Type-Options")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "nosniff"
         );
     }
 }

@@ -42,6 +42,15 @@ use crate::memorydb::MemoryDB;
 ///   [`SessionStore`]);
 /// - a secret key, to sign or encrypt the content of client-side session cookie.
 ///
+/// # Storage capacity
+///
+/// Every non-empty session is written to the provided [`MemoryDB`]. The in-process
+/// [`DefaultBackend`](crate::memorydb::default::DefaultBackend) is unbounded unless
+/// configured, so a deployment reachable by untrusted clients should set
+/// [`max_entries`](crate::memorydb::default::DefaultBackend::max_entries) and
+/// [`max_bytes`](crate::memorydb::default::DefaultBackend::max_bytes); otherwise
+/// anonymous sessions can grow without limit.
+///
 /// # How did we choose defaults?
 /// You should not regret adding `actix-session` to your dependencies and going to production using
 /// the default configuration. That is why, when in doubt, we opt to use the most secure option for
@@ -153,6 +162,9 @@ where
             let (session_key, session_state) =
                 load_session_state(session_key, storage_backend.as_ref()).await?;
 
+            // `purge` clears the state, so keep the id recorded when the session was
+            // loaded: its reverse lookup entry still has to be deleted.
+            let previous_id = session_id(&session_state);
             Session::set_session(&mut req, session_state);
 
             let mut res = service.call(req).await?;
@@ -168,9 +180,11 @@ where
                     cookie = Cow::Owned(tmp);
                 }
             }
-            let id = session_state
-                .get("_id")
-                .map(|x| x.to_string().trim_matches('"').to_owned());
+            let id = if status == SessionStatus::Purged {
+                previous_id
+            } else {
+                session_id(&session_state)
+            };
 
             match session_key {
                 None => {
@@ -210,13 +224,8 @@ where
                         }
 
                         SessionStatus::Renewed => {
-                            storage_backend
-                                .delete(&session_key, &id)
-                                .await
-                                .map_err(e500)?;
-
                             let session_key = storage_backend
-                                .save(session_state, &id, &ttl)
+                                .renew(session_key, session_state, &id, &ttl)
                                 .await
                                 .map_err(e500)?;
 
@@ -259,13 +268,11 @@ where
 /// It returns `None` if there is no session cookie or if the session cookie is considered invalid
 /// (e.g., when failing a signature check).
 fn extract_session_key(req: &ServiceRequest, config: &CookieConfiguration) -> Option<SessionKey> {
-    let cookies = req.cookies().ok()?;
-    let session_cookie = cookies
-        .iter()
-        .find(|&cookie| cookie.name() == config.name)?;
+    // Duplicated cookies are rejected instead of silently using the first one.
+    let session_cookie = crate::cookie::unique_cookie(req, &config.name)?;
 
     let mut jar = CookieJar::new();
-    jar.add_original(session_cookie.clone());
+    jar.add_original(session_cookie);
 
     let verification_result = match config.content_security {
         CookieContentSecurity::Signed => jar.signed(&config.key).get(&config.name),
@@ -273,6 +280,13 @@ fn extract_session_key(req: &ServiceRequest, config: &CookieConfiguration) -> Op
     };
 
     verification_result?.value().to_owned().try_into().ok()
+}
+
+/// Extract the reverse-lookup id (`_id`) from session state.
+fn session_id(state: &Map<String, Value>) -> Option<String> {
+    state
+        .get("_id")
+        .map(|x| x.to_string().trim_matches('"').to_owned())
 }
 
 async fn load_session_state(
@@ -361,4 +375,735 @@ fn delete_session_cookie(
     response.headers_mut().append(SET_COOKIE, val);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration as StdDuration};
+
+    use actix_web::{
+        cookie::{time::Duration as CookieDuration, Cookie, Key, SameSite},
+        http::{header, StatusCode},
+        test, web, App, HttpResponse,
+    };
+
+    use super::*;
+    use crate::{
+        memorydb::{default::DefaultBackend, MemoryDB},
+        session::{
+            config::{CookieContentSecurity, PersistentSession, TtlExtensionPolicy},
+            Session,
+        },
+    };
+
+    fn backend() -> Arc<dyn MemoryDB> {
+        Arc::new(DefaultBackend::new())
+    }
+
+    fn find_cookie<'a, B>(rsp: &'a ServiceResponse<B>, name: &str) -> Option<Cookie<'a>> {
+        rsp.response().cookies().find(|c| c.name() == name)
+    }
+
+    async fn insert_user(session: Session) -> HttpResponse {
+        session.insert("user", 1).unwrap();
+        HttpResponse::Ok().finish()
+    }
+
+    async fn read_user(session: Session) -> HttpResponse {
+        let value = session.get::<i32>("user").unwrap();
+        HttpResponse::Ok().body(value.map_or_else(|| "none".to_owned(), |v| v.to_string()))
+    }
+
+    async fn purge_session(session: Session) -> HttpResponse {
+        session.purge();
+        HttpResponse::Ok().finish()
+    }
+
+    async fn renew_session(session: Session) -> HttpResponse {
+        session.renew();
+        HttpResponse::Ok().finish()
+    }
+
+    async fn touch_session(_: Session) -> HttpResponse {
+        HttpResponse::Ok().finish()
+    }
+
+    async fn insert_ttl(session: Session) -> HttpResponse {
+        session.insert("_ttl", 5000).unwrap();
+        session.insert("user", 1).unwrap();
+        HttpResponse::Ok().finish()
+    }
+
+    async fn insert_id(session: Session) -> HttpResponse {
+        session.insert("_id", "user1").unwrap();
+        session.insert("user", 1).unwrap();
+        HttpResponse::Ok().finish()
+    }
+
+    async fn insert_secret(session: Session) -> HttpResponse {
+        session.insert("secret", "SESSION_SECRET_MARKER").unwrap();
+        HttpResponse::Ok().finish()
+    }
+
+    async fn insert_count(session: Session) -> HttpResponse {
+        session.insert("count", 1).unwrap();
+        HttpResponse::Ok().finish()
+    }
+
+    async fn bump_count(session: Session) -> HttpResponse {
+        session.update::<i32, _>("count", |v| v + 1).unwrap();
+        HttpResponse::Ok().finish()
+    }
+
+    async fn read_count(session: Session) -> HttpResponse {
+        let value = session.get::<i32>("count").unwrap();
+        HttpResponse::Ok().body(value.map_or_else(|| "none".to_owned(), |v| v.to_string()))
+    }
+
+    /// Flip the first character of an encoded cookie value so the signature or the
+    /// ciphertext no longer verifies.
+    fn tamper(cookie: &Cookie<'_>) -> Cookie<'static> {
+        let mut value = cookie.value().to_owned();
+        let first = value.chars().next().expect("non-empty cookie value");
+        let replacement = if first == 'A' { 'B' } else { 'A' };
+        value.replace_range(0..first.len_utf8(), &replacement.to_string());
+        Cookie::new(cookie.name().to_owned(), value)
+    }
+
+    // Persistence.
+
+    #[actix_web::test]
+    async fn new_session_is_saved_with_a_secure_cookie() {
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/", web::get().to(insert_user)),
+        )
+        .await;
+
+        let rsp = test::call_service(&app, test::TestRequest::get().uri("/").to_request()).await;
+        assert_eq!(rsp.status(), StatusCode::OK);
+
+        let cookie = find_cookie(&rsp, "id").expect("session cookie");
+        assert!(!cookie.value().is_empty());
+        assert_eq!(cookie.http_only(), Some(true));
+        assert_eq!(cookie.secure(), Some(true));
+        assert_eq!(cookie.same_site(), Some(SameSite::Lax));
+        assert_eq!(cookie.path(), Some("/"));
+
+        let keys = backend.keys("*").await.unwrap();
+        assert_eq!(keys.len(), 1);
+        let ttl = backend.ttl(&keys[0]).await.unwrap().unwrap();
+        assert!(ttl > StdDuration::from_secs(23 * 60 * 60));
+        assert!(ttl <= StdDuration::from_secs(24 * 60 * 60));
+    }
+
+    #[actix_web::test]
+    async fn subsequent_requests_load_the_session() {
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/insert", web::get().to(insert_user))
+                .route("/read", web::get().to(read_user)),
+        )
+        .await;
+
+        let rsp =
+            test::call_service(&app, test::TestRequest::get().uri("/insert").to_request()).await;
+        let cookie = find_cookie(&rsp, "id").unwrap().into_owned();
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/read")
+                .cookie(cookie)
+                .to_request(),
+        )
+        .await;
+        // An unchanged session is not written back and gets no new cookie.
+        assert!(find_cookie(&rsp, "id").is_none());
+        assert_eq!(test::read_body(rsp).await.as_ref(), b"1");
+        assert_eq!(backend.keys("*").await.unwrap().len(), 1);
+    }
+
+    // Lifecycle.
+
+    #[actix_web::test]
+    async fn purge_deletes_state_and_expires_the_cookie() {
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/insert", web::get().to(insert_user))
+                .route("/purge", web::get().to(purge_session)),
+        )
+        .await;
+
+        let rsp =
+            test::call_service(&app, test::TestRequest::get().uri("/insert").to_request()).await;
+        let cookie = find_cookie(&rsp, "id").unwrap().into_owned();
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/purge")
+                .cookie(cookie)
+                .to_request(),
+        )
+        .await;
+        assert_eq!(rsp.status(), StatusCode::OK);
+
+        let removal = find_cookie(&rsp, "id").expect("removal cookie");
+        assert_eq!(removal.value(), "");
+        assert_eq!(removal.max_age(), Some(CookieDuration::ZERO));
+        assert!(backend.keys("*").await.unwrap().is_empty());
+    }
+
+    #[actix_web::test]
+    async fn renew_rotates_the_session_key() {
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/insert", web::get().to(insert_user))
+                .route("/renew", web::get().to(renew_session))
+                .route("/read", web::get().to(read_user)),
+        )
+        .await;
+
+        let rsp =
+            test::call_service(&app, test::TestRequest::get().uri("/insert").to_request()).await;
+        let old = find_cookie(&rsp, "id").unwrap().into_owned();
+        let old_value = old.value().to_owned();
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/renew")
+                .cookie(old.clone())
+                .to_request(),
+        )
+        .await;
+        let new = find_cookie(&rsp, "id").unwrap().into_owned();
+        assert_ne!(new.value(), old_value);
+        // Only the new key holds the session state.
+        assert_eq!(backend.keys("*").await.unwrap().len(), 1);
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/read")
+                .cookie(old)
+                .to_request(),
+        )
+        .await;
+        assert_eq!(test::read_body(rsp).await.as_ref(), b"none");
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/read")
+                .cookie(new)
+                .to_request(),
+        )
+        .await;
+        assert_eq!(test::read_body(rsp).await.as_ref(), b"1");
+    }
+
+    #[actix_web::test]
+    async fn ttl_override_updates_cookie_and_state_ttl() {
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/", web::get().to(insert_ttl)),
+        )
+        .await;
+
+        let rsp = test::call_service(&app, test::TestRequest::get().uri("/").to_request()).await;
+        assert_eq!(
+            find_cookie(&rsp, "id").unwrap().max_age(),
+            Some(CookieDuration::seconds(5))
+        );
+
+        let keys = backend.keys("*").await.unwrap();
+        let ttl = backend.ttl(&keys[0]).await.unwrap().unwrap();
+        assert!(ttl > StdDuration::from_secs(4));
+        assert!(ttl <= StdDuration::from_secs(5));
+    }
+
+    #[actix_web::test]
+    async fn id_records_and_removes_the_reverse_lookup() {
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/insert", web::get().to(insert_id))
+                .route("/purge", web::get().to(purge_session)),
+        )
+        .await;
+
+        let rsp =
+            test::call_service(&app, test::TestRequest::get().uri("/insert").to_request()).await;
+        let cookie = find_cookie(&rsp, "id").unwrap().into_owned();
+
+        let mut keys = backend.keys("*").await.unwrap();
+        keys.sort();
+        assert_eq!(keys.len(), 2);
+        let id_key = keys
+            .iter()
+            .find(|k| k.starts_with("user1_"))
+            .expect("reverse lookup key");
+        assert_eq!(backend.get(id_key).await.unwrap().as_deref(), Some("1"));
+
+        test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/purge")
+                .cookie(cookie)
+                .to_request(),
+        )
+        .await;
+        assert!(backend.keys("*").await.unwrap().is_empty());
+    }
+
+    // Edge cases and configuration.
+
+    #[actix_web::test]
+    async fn invalid_cookie_starts_a_fresh_session() {
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/", web::get().to(insert_user)),
+        )
+        .await;
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/")
+                .cookie(Cookie::new("id", "bogus"))
+                .to_request(),
+        )
+        .await;
+
+        assert_eq!(rsp.status(), StatusCode::OK);
+        assert!(find_cookie(&rsp, "id").is_some());
+        assert_eq!(backend.keys("*").await.unwrap().len(), 1);
+    }
+
+    #[actix_web::test]
+    async fn duplicate_session_cookies_are_rejected() {
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/insert", web::get().to(insert_user))
+                .route("/read", web::get().to(read_user)),
+        )
+        .await;
+
+        let rsp =
+            test::call_service(&app, test::TestRequest::get().uri("/insert").to_request()).await;
+        let cookie = find_cookie(&rsp, "id").unwrap().into_owned();
+        // `TestRequest::cookie` deduplicates through a cookie jar, so send the raw
+        // header to exercise cookie shadowing.
+        let duplicated = format!("id={}; id={}", cookie.value(), cookie.value());
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/read")
+                .insert_header((header::COOKIE, duplicated))
+                .to_request(),
+        )
+        .await;
+
+        // The duplicated cookie is ignored, so a fresh empty session is used.
+        assert_eq!(test::read_body(rsp).await.as_ref(), b"none");
+        // The stored session was not touched.
+        assert_eq!(backend.keys("*").await.unwrap().len(), 1);
+    }
+
+    #[actix_web::test]
+    async fn lost_backend_state_starts_a_fresh_session() {
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/insert", web::get().to(insert_user))
+                .route("/read", web::get().to(read_user)),
+        )
+        .await;
+
+        let rsp =
+            test::call_service(&app, test::TestRequest::get().uri("/insert").to_request()).await;
+        let cookie = find_cookie(&rsp, "id").unwrap().into_owned();
+        backend.flush().await.unwrap();
+
+        // The signed cookie is still valid but its state is gone.
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/read")
+                .cookie(cookie.clone())
+                .to_request(),
+        )
+        .await;
+        assert!(find_cookie(&rsp, "id").is_none());
+        assert_eq!(test::read_body(rsp).await.as_ref(), b"none");
+
+        // A changed session is saved under a new key.
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/insert")
+                .cookie(cookie)
+                .to_request(),
+        )
+        .await;
+        assert!(find_cookie(&rsp, "id").is_some());
+        assert_eq!(backend.keys("*").await.unwrap().len(), 1);
+    }
+
+    #[actix_web::test]
+    async fn ttl_extension_policy_refreshes_unchanged_sessions() {
+        let backend = backend();
+        let mw = SessionMiddleware::builder(backend.clone(), Key::generate())
+            .session_lifecycle(
+                PersistentSession::default()
+                    .session_ttl_extension_policy(TtlExtensionPolicy::OnEveryRequest),
+            )
+            .build();
+        let app = test::init_service(
+            App::new()
+                .wrap(mw)
+                .route("/insert", web::get().to(insert_user))
+                .route("/touch", web::get().to(touch_session)),
+        )
+        .await;
+
+        let rsp =
+            test::call_service(&app, test::TestRequest::get().uri("/insert").to_request()).await;
+        let cookie = find_cookie(&rsp, "id").unwrap().into_owned();
+        // A persistent session always sets Max-Age.
+        assert_eq!(cookie.max_age(), Some(CookieDuration::days(1)));
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/touch")
+                .cookie(cookie)
+                .to_request(),
+        )
+        .await;
+        assert_eq!(rsp.status(), StatusCode::OK);
+        // The TTL is refreshed and the cookie is re-sent even without state changes.
+        assert!(find_cookie(&rsp, "id").is_some());
+        assert_eq!(backend.keys("*").await.unwrap().len(), 1);
+    }
+
+    #[actix_web::test]
+    async fn cookie_configuration_is_applied_and_signed_cookies_load() {
+        let backend = backend();
+        let mw = SessionMiddleware::builder(backend.clone(), Key::generate())
+            .cookie_name("sid".into())
+            .cookie_secure(false)
+            .cookie_http_only(false)
+            .cookie_same_site(SameSite::Strict)
+            .cookie_path("/app".into())
+            .cookie_domain(Some("example.com".into()))
+            .cookie_content_security(CookieContentSecurity::Signed)
+            .build();
+        let app = test::init_service(
+            App::new()
+                .wrap(mw)
+                .route("/insert", web::get().to(insert_user))
+                .route("/read", web::get().to(read_user)),
+        )
+        .await;
+
+        let rsp =
+            test::call_service(&app, test::TestRequest::get().uri("/insert").to_request()).await;
+        let cookie = find_cookie(&rsp, "sid").expect("session cookie");
+        assert_eq!(cookie.secure(), None);
+        assert_eq!(cookie.http_only(), None);
+        assert_eq!(cookie.same_site(), Some(SameSite::Strict));
+        assert_eq!(cookie.path(), Some("/app"));
+        assert_eq!(cookie.domain(), Some("example.com"));
+        let cookie = cookie.into_owned();
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/read")
+                .cookie(cookie)
+                .to_request(),
+        )
+        .await;
+        assert_eq!(test::read_body(rsp).await.as_ref(), b"1");
+    }
+
+    #[actix_web::test]
+    async fn handler_error_responses_still_finalize_the_session() {
+        async fn failing(session: Session) -> actix_web::Result<HttpResponse> {
+            session.insert("user", 1).unwrap();
+            Err(actix_web::error::ErrorInternalServerError("boom"))
+        }
+
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/", web::get().to(failing)),
+        )
+        .await;
+
+        let rsp = test::call_service(&app, test::TestRequest::get().uri("/").to_request()).await;
+
+        // `Result` handlers turn errors into responses inside the route, so the
+        // middleware still observes the changed session and saves it.
+        assert_eq!(rsp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(find_cookie(&rsp, "id").is_some());
+        assert_eq!(backend.keys("*").await.unwrap().len(), 1);
+    }
+
+    // Security properties.
+
+    #[actix_web::test]
+    async fn tampered_session_cookies_are_rejected() {
+        for content_security in [
+            CookieContentSecurity::Private,
+            CookieContentSecurity::Signed,
+        ] {
+            let backend = backend();
+            let mw = SessionMiddleware::builder(backend.clone(), Key::generate())
+                .cookie_content_security(content_security)
+                .build();
+            let app = test::init_service(
+                App::new()
+                    .wrap(mw)
+                    .route("/insert", web::get().to(insert_user))
+                    .route("/read", web::get().to(read_user)),
+            )
+            .await;
+
+            let rsp =
+                test::call_service(&app, test::TestRequest::get().uri("/insert").to_request())
+                    .await;
+            let cookie = find_cookie(&rsp, "id").unwrap().into_owned();
+
+            // A modified cookie must not load the original state.
+            let rsp = test::call_service(
+                &app,
+                test::TestRequest::get()
+                    .uri("/read")
+                    .cookie(tamper(&cookie))
+                    .to_request(),
+            )
+            .await;
+            assert_eq!(
+                test::read_body(rsp).await.as_ref(),
+                b"none",
+                "{content_security:?}"
+            );
+
+            // The untampered cookie still works.
+            let rsp = test::call_service(
+                &app,
+                test::TestRequest::get()
+                    .uri("/read")
+                    .cookie(cookie)
+                    .to_request(),
+            )
+            .await;
+            assert_eq!(
+                test::read_body(rsp).await.as_ref(),
+                b"1",
+                "{content_security:?}"
+            );
+        }
+    }
+
+    #[actix_web::test]
+    async fn a_cookie_from_another_key_is_rejected() {
+        let backend = backend();
+        let app_a = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/insert", web::get().to(insert_user)),
+        )
+        .await;
+        let app_b = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/read", web::get().to(read_user)),
+        )
+        .await;
+
+        let rsp =
+            test::call_service(&app_a, test::TestRequest::get().uri("/insert").to_request()).await;
+        let cookie = find_cookie(&rsp, "id").unwrap().into_owned();
+
+        // The session key is signed/encrypted with a different key, so it cannot be
+        // used to load another application's sessions.
+        let rsp = test::call_service(
+            &app_b,
+            test::TestRequest::get()
+                .uri("/read")
+                .cookie(cookie)
+                .to_request(),
+        )
+        .await;
+        assert_eq!(test::read_body(rsp).await.as_ref(), b"none");
+    }
+
+    #[actix_web::test]
+    async fn session_state_is_not_stored_in_the_cookie() {
+        for content_security in [
+            CookieContentSecurity::Private,
+            CookieContentSecurity::Signed,
+        ] {
+            let backend = backend();
+            let mw = SessionMiddleware::builder(backend, Key::generate())
+                .cookie_content_security(content_security)
+                .build();
+            let app =
+                test::init_service(App::new().wrap(mw).route("/", web::get().to(insert_secret)))
+                    .await;
+
+            let rsp =
+                test::call_service(&app, test::TestRequest::get().uri("/").to_request()).await;
+            let cookie = find_cookie(&rsp, "id").expect("session cookie");
+
+            // Session state lives in the backend; the cookie only carries the key.
+            assert!(!cookie.value().contains("SESSION_SECRET_MARKER"));
+        }
+    }
+
+    #[actix_web::test]
+    async fn sessions_without_state_get_no_cookie() {
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/", web::get().to(touch_session)),
+        )
+        .await;
+
+        let rsp = test::call_service(&app, test::TestRequest::get().uri("/").to_request()).await;
+
+        // No tracking cookie or backend entry is created for an empty session.
+        assert!(find_cookie(&rsp, "id").is_none());
+        assert!(backend.keys("*").await.unwrap().is_empty());
+    }
+
+    #[actix_web::test]
+    async fn renew_moves_the_reverse_lookup_key() {
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/insert", web::get().to(insert_id))
+                .route("/renew", web::get().to(renew_session))
+                .route("/read", web::get().to(read_user)),
+        )
+        .await;
+
+        let rsp =
+            test::call_service(&app, test::TestRequest::get().uri("/insert").to_request()).await;
+        let old_cookie = find_cookie(&rsp, "id").unwrap().into_owned();
+
+        let before = backend.keys("*").await.unwrap();
+        assert_eq!(before.len(), 2);
+        let old_key = before
+            .iter()
+            .find(|k| !k.starts_with("user1_"))
+            .expect("session key")
+            .clone();
+        let old_reverse = format!("user1_{old_key}");
+        assert!(before.contains(&old_reverse));
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/renew")
+                .cookie(old_cookie.clone())
+                .to_request(),
+        )
+        .await;
+        let new_cookie = find_cookie(&rsp, "id").unwrap().into_owned();
+
+        let after = backend.keys("*").await.unwrap();
+        assert_eq!(after.len(), 2);
+        assert!(!after.contains(&old_key));
+        assert!(!after.contains(&old_reverse));
+        let new_key = after
+            .iter()
+            .find(|k| !k.starts_with("user1_"))
+            .expect("session key")
+            .clone();
+        assert!(after.contains(&format!("user1_{new_key}")));
+
+        // The old cookie is dead, the new one carries the state.
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/read")
+                .cookie(old_cookie)
+                .to_request(),
+        )
+        .await;
+        assert_eq!(test::read_body(rsp).await.as_ref(), b"none");
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/read")
+                .cookie(new_cookie)
+                .to_request(),
+        )
+        .await;
+        assert_eq!(test::read_body(rsp).await.as_ref(), b"1");
+    }
+
+    #[actix_web::test]
+    async fn update_on_a_loaded_session_is_persisted() {
+        let backend = backend();
+        let app = test::init_service(
+            App::new()
+                .wrap(SessionMiddleware::new(backend.clone(), Key::generate()))
+                .route("/insert", web::get().to(insert_count))
+                .route("/bump", web::get().to(bump_count))
+                .route("/read", web::get().to(read_count)),
+        )
+        .await;
+
+        let rsp =
+            test::call_service(&app, test::TestRequest::get().uri("/insert").to_request()).await;
+        let cookie = find_cookie(&rsp, "id").unwrap().into_owned();
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/bump")
+                .cookie(cookie.clone())
+                .to_request(),
+        )
+        .await;
+        assert_eq!(rsp.status(), StatusCode::OK);
+
+        let rsp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/read")
+                .cookie(cookie)
+                .to_request(),
+        )
+        .await;
+        assert_eq!(test::read_body(rsp).await.as_ref(), b"2");
+    }
 }

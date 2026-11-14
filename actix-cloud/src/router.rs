@@ -198,8 +198,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
     use actix_web::{
-        http::{header, StatusCode},
+        http::{header, Method, StatusCode},
         test, web, App, HttpResponse,
     };
 
@@ -290,6 +295,161 @@ mod tests {
                 .and_then(|v| v.to_str().ok()),
             Some("POST")
         );
+    }
+
+    struct Allow(Arc<AtomicBool>);
+
+    #[async_trait(?Send)]
+    impl Checker for Allow {
+        async fn check(&self, _req: &mut ServiceRequest) -> Result<(), actix_web::Error> {
+            self.0.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[actix_web::test]
+    async fn checker_can_allow_request() {
+        let called = Arc::new(AtomicBool::new(false));
+        let routers = vec![Router {
+            path: "/hello".to_owned(),
+            route: web::get().to(|| async { HttpResponse::Ok().finish() }),
+            checker: Some(Rc::new(Allow(called.clone()))),
+            #[cfg(feature = "csrf")]
+            csrf: CSRFType::Disabled,
+        }];
+
+        let resp = call(
+            routers,
+            actix_web::test::TestRequest::get().uri("/api/hello"),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(called.load(Ordering::SeqCst));
+    }
+
+    #[cfg(feature = "csrf")]
+    #[actix_web::test]
+    async fn auth_checker_runs_before_csrf() {
+        let csrf_ran = Arc::new(AtomicBool::new(false));
+        let csrf_ran_clone = csrf_ran.clone();
+        let routers = vec![Router {
+            path: "/hello".to_owned(),
+            route: web::post().to(|| async { HttpResponse::Ok().finish() }),
+            checker: Some(Rc::new(Reject)),
+            csrf: CSRFType::Header,
+        }];
+        let csrf =
+            crate::csrf::Middleware::new("_csrf".to_owned(), "x-csrf".to_owned(), move |_, _| {
+                csrf_ran_clone.store(true, Ordering::SeqCst);
+                async { Ok::<_, actix_web::Error>(true) }
+            });
+        let app = test::init_service(
+            App::new().service(web::scope("/api").configure(build_router(routers, csrf))),
+        )
+        .await;
+
+        let result = test::try_call_service(
+            &app,
+            test::TestRequest::post().uri("/api/hello").to_request(),
+        )
+        .await;
+        let status = match result {
+            Ok(resp) => resp.status(),
+            Err(err) => err.as_response_error().error_response().status(),
+        };
+
+        // The auth checker rejects before the CSRF middleware is reached.
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert!(!csrf_ran.load(Ordering::SeqCst));
+    }
+
+    #[actix_web::test]
+    async fn empty_path_routes_are_ignored() {
+        let ignored = router("", web::get().to(|| async { HttpResponse::Ok().finish() }));
+        let valid = router(
+            "/hello",
+            web::get().to(|| async { HttpResponse::Ok().finish() }),
+        );
+
+        // Registering an empty path must not panic; the valid route still works.
+        let resp = call(
+            vec![ignored, valid],
+            test::TestRequest::get().uri("/api/hello"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = call(
+            vec![router(
+                "",
+                web::get().to(|| async { HttpResponse::Ok().finish() }),
+            )],
+            test::TestRequest::get().uri("/api/hello"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    fn rejected_routes() -> Vec<Router> {
+        vec![
+            Router {
+                path: "/hello".to_owned(),
+                route: web::get().to(|| async { HttpResponse::Ok().finish() }),
+                checker: Some(Rc::new(Reject)),
+                #[cfg(feature = "csrf")]
+                csrf: CSRFType::Disabled,
+            },
+            Router {
+                path: "/hello".to_owned(),
+                route: web::post().to(|| async { HttpResponse::Ok().finish() }),
+                checker: Some(Rc::new(Reject)),
+                #[cfg(feature = "csrf")]
+                csrf: CSRFType::Disabled,
+            },
+        ]
+    }
+
+    #[actix_web::test]
+    async fn checker_runs_for_every_method_on_the_same_path() {
+        for req in [
+            test::TestRequest::get().uri("/api/hello"),
+            test::TestRequest::post().uri("/api/hello"),
+        ] {
+            assert_eq!(
+                call(rejected_routes(), req).await.status(),
+                StatusCode::UNAUTHORIZED
+            );
+        }
+    }
+
+    #[actix_web::test]
+    async fn head_requests_follow_the_method_guard() {
+        // Actix does not route HEAD to a GET-only handler here: the request is
+        // rejected by the method guard (405) and the handler never runs.
+        let resp = call(
+            rejected_routes(),
+            test::TestRequest::get()
+                .method(Method::HEAD)
+                .uri("/api/hello"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[cfg(feature = "csrf")]
+    #[actix_web::test]
+    async fn disabled_csrf_does_not_disable_auth() {
+        let routers = vec![Router {
+            path: "/hello".to_owned(),
+            route: web::post().to(|| async { HttpResponse::Ok().finish() }),
+            checker: Some(Rc::new(Reject)),
+            csrf: CSRFType::Disabled,
+        }];
+
+        // No CSRF token at all: the auth checker still rejects the request.
+        let resp = call(routers, test::TestRequest::post().uri("/api/hello")).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[actix_web::test]

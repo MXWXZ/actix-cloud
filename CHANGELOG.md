@@ -7,11 +7,30 @@
 5. `ResponseError` wraps `Box<dyn std::error::Error + Send + Sync>` instead of `anyhow::Error`. `?` still accepts standard errors, `anyhow::Error`, `Box<dyn Error>`, `String` and `&'static str`.
 6. `ServerHandle::start` and `utils::restart` return `std::io::Result`; `utils::load_rustls_config` returns `utils::RustlsConfigError`; logger writer callbacks return `std::io::Result<()>`.
 7. `Session`'s `FromRequest::Error` is now `Infallible` instead of `actix_web::Error`.
+8. `MemoryDB` has a new required `rename` method; custom backends must implement it.
 
 ## New
 1. `DefaultBackend::max_bytes(Some(n))` limits stored payload bytes (`key.len() + value.len()`, UTF-8). It uses the same eviction policy as `max_entries`. Entries larger than the limit are rejected.
 2. Typed errors: `memorydb::MemoryDBError`/`MemoryDBResult`, `session::SessionError`, `utils::RustlsConfigError` and `response_build::BuildError` (now covers I/O, YAML parsing and code generation failures).
 3. `Session::new()` creates a standalone empty session, useful for tests.
+4. `DefaultBackend::entry_evict_ratio` and `bytes_evict_ratio` configure how much of each limit is reclaimed per eviction pass (default `0.1`, clamped to `0.0..=1.0`).
+5. `logger::escape_control` escapes control characters (C0, DEL and C1) in untrusted text for terminal output while keeping printable Unicode.
+6. `MemoryDB::rename` atomically moves a value (and its remaining TTL) to another key, replacing the destination.
+
+## Fix
+1. `RedisBackend` now matches `DefaultBackend`'s observable behavior: `set_ex`/`get_ex` with a zero TTL delete the key instead of returning a Redis error, invalid `keys` patterns return `MemoryDBError::InvalidPattern`, and TTLs whose absolute expiration overflows return `MemoryDBError::TtlOutOfRange`.
+2. Purging a session now also removes its `{id}_{session_key}` reverse-lookup entry; previously it lingered in the store until its TTL expired.
+3. The `i18n` feature now enables `state` and `request` automatically, so combinations such as `response,i18n` compile without listing them explicitly.
+4. `Session::update` and `update_or` now mark the session as changed after updating an existing key, so changes to loaded sessions are persisted instead of being silently dropped.
+5. CSRF checks now reject duplicated or empty cookies, headers and query parameters (a duplicated or malformed header no longer falls back to the query parameter), and compare tokens in constant time. Whether a matching token is actually valid for the user remains the application's responsibility through the `checker` callback.
+6. `JsonResponse` no longer panics when a builder callback inserts an invalid header; the builder error is rendered as its error response instead.
+7. The color log writer escapes control characters in message text and in field/span values, so untrusted content cannot forge log lines or inject terminal escape sequences. Printable text, including non-ASCII, is kept as-is.
+8. `request::Middleware` skips the trace header when the configured header name or the trace id is not a valid header value instead of panicking on every request.
+9. CSRF middleware returns 500 instead of panicking when it is mounted outside `build_router` (no `CSRFType` extension).
+10. Session renewal now rotates the key with `MemoryDB::rename` instead of deleting and re-saving, so the old key disappears atomically and there is no window where neither key exists.
+11. Session middleware now rejects duplicated session cookies, matching the CSRF cookie handling, instead of silently using the first one (cookie shadowing).
+12. `RedisBackend::keys` now uses cursor-based `SCAN` instead of the blocking `KEYS` command.
+13. Non-success `JsonResponse` messages are sent as `text/plain; charset=utf-8`, so a reflected message cannot be MIME-sniffed as HTML.
 
 # 0.7.3
 ## Fix

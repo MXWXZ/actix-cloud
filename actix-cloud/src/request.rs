@@ -3,6 +3,16 @@
 //! Wrap the app with [`Middleware`] and handlers can read the [`Extension`] from request
 //! extensions (`ReqData<Arc<Extension>>` or `req.extensions()`): request start time,
 //! identified language, trace id and client real IP.
+//!
+//! # Trusted proxies
+//!
+//! The default real-IP resolver uses the connection peer address, which cannot be
+//! forged. Behind a reverse proxy every request appears to come from the proxy, so a
+//! custom [`Middleware::real_ip`] callback typically reads `X-Real-IP` or
+//! `X-Forwarded-For`. Only trust those headers when the peer address belongs to a
+//! trusted proxy: otherwise a client can set them and choose its own IP (e.g. to
+//! bypass IP-based rate limits). Make sure the proxy overwrites client-supplied
+//! values instead of appending them.
 use std::{
     net::{Ipv4Addr, SocketAddr},
     rc::Rc,
@@ -92,6 +102,11 @@ impl Middleware {
     /// Set the callback to resolve the client real IP (e.g. reading `X-Real-IP`).
     ///
     /// Defaults to the peer address of the connection.
+    ///
+    /// # Warning
+    /// Forwarding headers are client-controlled unless a trusted proxy sets them;
+    /// only read them when the peer address is a trusted proxy. See the
+    /// [module-level documentation](crate::request) for details.
     pub fn real_ip<F>(mut self, f: F) -> Self
     where
         F: Fn(&ServiceRequest) -> SocketAddr + 'static,
@@ -196,10 +211,14 @@ where
             Box::pin(self.service.call(req).map(move |x| {
                 if let Some(header) = header.as_ref() {
                     x.map(|mut x| {
-                        x.headers_mut().insert(
-                            actix_web::http::header::HeaderName::from_str(header).unwrap(),
-                            actix_web::http::header::HeaderValue::from_str(&trace_id).unwrap(),
-                        );
+                        // A misconfigured header name or a malformed trace id must not
+                        // panic the worker; skip the header instead.
+                        if let (Ok(name), Ok(value)) = (
+                            actix_web::http::header::HeaderName::from_str(header),
+                            actix_web::http::header::HeaderValue::from_str(&trace_id),
+                        ) {
+                            x.headers_mut().insert(name, value);
+                        }
                         x
                     })
                 } else {
@@ -228,6 +247,10 @@ mod tests {
 
     /// Run one request through the middleware and return the inserted `Extension`.
     async fn call(mw: Middleware) -> Arc<Extension> {
+        call_request(mw, actix_web::test::TestRequest::get().uri("/")).await
+    }
+
+    async fn call_request(mw: Middleware, req: actix_web::test::TestRequest) -> Arc<Extension> {
         let out = web::Data::new(Mutex::new(None));
         let app = actix_web::test::init_service(
             App::new()
@@ -236,11 +259,7 @@ mod tests {
                 .route("/", web::get().to(handler)),
         )
         .await;
-        let rsp = actix_web::test::call_service(
-            &app,
-            actix_web::test::TestRequest::get().uri("/").to_request(),
-        )
-        .await;
+        let rsp = actix_web::test::call_service(&app, req.to_request()).await;
         assert!(rsp.status().is_success());
         let ext = out.lock().unwrap().take().expect("Extension not inserted");
         ext
@@ -296,7 +315,155 @@ mod tests {
     }
 
     #[cfg(feature = "traceid")]
+    #[actix_web::test]
+    async fn invalid_trace_header_is_skipped() {
+        let app = actix_web::test::init_service(
+            App::new()
+                // Space is not allowed in a header name.
+                .wrap(Middleware::new().trace_header("bad header"))
+                .route("/", web::get().to(handler_no_data)),
+        )
+        .await;
+        let rsp = actix_web::test::call_service(
+            &app,
+            actix_web::test::TestRequest::get().uri("/").to_request(),
+        )
+        .await;
+
+        // The request succeeds and no trace header is added instead of panicking.
+        assert!(rsp.status().is_success());
+        assert!(!rsp.headers().contains_key("bad header"));
+    }
+
+    #[cfg(feature = "traceid")]
     async fn handler_no_data(_: HttpRequest) -> HttpResponse {
         HttpResponse::Ok().finish()
+    }
+
+    #[cfg(all(feature = "i18n", feature = "state"))]
+    fn global_state(default: &str) -> crate::state::GlobalState {
+        crate::state::GlobalState {
+            #[cfg(feature = "memorydb")]
+            memorydb: Arc::new(crate::memorydb::default::DefaultBackend::new()),
+            #[cfg(feature = "config")]
+            config: crate::config::Config::default(),
+            #[cfg(feature = "logger")]
+            logger: None,
+            locale: crate::i18n::Locale::new(default),
+            server: Default::default(),
+        }
+    }
+
+    #[cfg(all(feature = "i18n", feature = "state"))]
+    #[actix_web::test]
+    async fn lang_falls_back_to_the_global_state_default() {
+        let out: web::Data<Mutex<Option<Arc<Extension>>>> = web::Data::new(Mutex::new(None));
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(global_state("de-DE").build())
+                .wrap(Middleware::new())
+                .app_data(out.clone())
+                .route("/", web::get().to(handler)),
+        )
+        .await;
+
+        let rsp = actix_web::test::call_service(
+            &app,
+            actix_web::test::TestRequest::get().uri("/").to_request(),
+        )
+        .await;
+        assert!(rsp.status().is_success());
+
+        let ext = out.lock().unwrap().take().expect("Extension not inserted");
+        assert_eq!(ext.lang, "de-DE");
+    }
+
+    #[cfg(feature = "traceid")]
+    #[actix_web::test]
+    async fn trace_id_comes_from_tracing_logger() {
+        async fn trace_handler(
+            req: HttpRequest,
+            out: web::Data<Mutex<Option<Arc<Extension>>>>,
+        ) -> HttpResponse {
+            *out.lock().unwrap() = req.extensions().get::<Arc<Extension>>().cloned();
+            HttpResponse::Ok().finish()
+        }
+
+        let out: web::Data<Mutex<Option<Arc<Extension>>>> = web::Data::new(Mutex::new(None));
+        let app = actix_web::test::init_service(
+            App::new()
+                // Wrapped first so `TracingLogger` (outer) inserts the id first.
+                .wrap(Middleware::new().trace_header("X-Trace-Id"))
+                .wrap(tracing_actix_web::TracingLogger::default())
+                .app_data(out.clone())
+                .route("/", web::get().to(trace_handler)),
+        )
+        .await;
+
+        let rsp = actix_web::test::call_service(
+            &app,
+            actix_web::test::TestRequest::get().uri("/").to_request(),
+        )
+        .await;
+        assert!(rsp.status().is_success());
+
+        let ext = out.lock().unwrap().take().expect("Extension not inserted");
+        assert!(!ext.trace_id.is_empty());
+        assert_eq!(
+            rsp.headers()
+                .get("X-Trace-Id")
+                .expect("trace header")
+                .to_str()
+                .unwrap(),
+            ext.trace_id
+        );
+    }
+
+    // Spoofing resistance.
+
+    #[actix_web::test]
+    async fn forwarding_headers_do_not_spoof_the_default_real_ip() {
+        // The default resolver uses the connection peer address, never request
+        // headers. Trusting a header is an explicit opt-in through `real_ip`.
+        let ext = call_request(
+            Middleware::new(),
+            actix_web::test::TestRequest::get()
+                .uri("/")
+                .insert_header(("X-Forwarded-For", "203.0.113.9"))
+                .insert_header(("X-Real-IP", "203.0.113.10"))
+                .insert_header(("Forwarded", "for=203.0.113.11")),
+        )
+        .await;
+
+        assert_eq!(ext.real_ip, SocketAddr::from(([0, 0, 0, 0], 0)));
+    }
+
+    #[cfg(all(feature = "i18n", feature = "state"))]
+    #[actix_web::test]
+    async fn accept_language_does_not_override_the_default_language() {
+        // Language detection is opt-in through `lang`; the `Accept-Language` header
+        // is not trusted implicitly.
+        let out: web::Data<Mutex<Option<Arc<Extension>>>> = web::Data::new(Mutex::new(None));
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(global_state("de-DE").build())
+                .wrap(Middleware::new())
+                .app_data(out.clone())
+                .route("/", web::get().to(handler)),
+        )
+        .await;
+
+        let rsp = actix_web::test::call_service(
+            &app,
+            actix_web::test::TestRequest::get()
+                .uri("/")
+                .insert_header(("Accept-Language", "zh-CN, en;q=0.5"))
+                .to_request(),
+        )
+        .await;
+        assert!(rsp.status().is_success());
+
+        let ext = out.lock().unwrap().take().expect("Extension not inserted");
+        assert_eq!(ext.lang, "de-DE");
     }
 }

@@ -181,4 +181,57 @@ mod tests {
         assert_eq!(m.keys().copied().collect::<Vec<_>>(), ["a", "b"]);
         assert_eq!(m["a"], 1);
     }
+
+    #[test]
+    fn add_locale_overwrites_existing_entries() {
+        let locale = Locale::new("en-US")
+            .add_locale(crate::map! {"en-US.key" => "first"})
+            .add_locale(crate::map! {"en-US.key" => "second"});
+
+        assert_eq!(locale.translate("en-US", "key"), "second");
+    }
+
+    #[test]
+    fn t_macro_replaces_every_occurrence_literally() {
+        let locale = Locale::new("en-US").add_locale(crate::map! {
+            "en-US.eq" => "%{a} + %{a} = %{b}"
+        });
+
+        // Replacement is literal: `$`, `%` and braces in values are not special.
+        assert_eq!(
+            crate::t!(locale, "eq", a = "$1%{}", b = "2"),
+            "$1%{} + $1%{} = 2"
+        );
+        // All variables must be supplied by the caller; extra ones are ignored.
+        assert_eq!(
+            crate::t!(locale, "eq", a = "x", b = "y", unused = "z"),
+            "x + x = y"
+        );
+    }
+
+    #[test]
+    fn empty_default_locale_falls_back_to_the_key() {
+        let locale = Locale::new("");
+
+        assert_eq!(locale.translate("", "missing"), "missing");
+        assert_eq!(locale.translate("zh-CN", "missing"), "missing");
+    }
+
+    #[test]
+    fn map_macro_keeps_the_last_duplicate() {
+        let m = crate::map! {"a" => 1, "a" => 2};
+        assert_eq!(m["a"], 2);
+        assert_eq!(m.len(), 1);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn locale_roundtrips_through_serde() {
+        let locale = locale();
+        let json = serde_json::to_string(&locale).unwrap();
+        let decoded: Locale = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded.default, "en-US");
+        assert_eq!(decoded.translate("zh-CN", "greeting"), "你好");
+    }
 }

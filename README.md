@@ -183,21 +183,26 @@ header.set_default_hsts();  // max-age=31536000; includeSubDomains; preload
 app.wrap(header.build())
 ```
 
+HSTS is opt-in because sending it over plain HTTP would lock clients out of the site. Only enable it on HTTPS deployments, and only use `preload` once you are ready for the domain to be added to browser preload lists.
+
 ### memorydb-default
 Actix Cloud has a default memory database backend used for sessions. You can also use your own backend by implementing the object-safe `MemoryDB` trait. Backends are shared as `Arc<dyn MemoryDB>`.
 
 **The default memorydb is only for demo purpose. The performance is not guaranteed.**
 
+`DefaultBackend::new()` is **unbounded**: entries stay in memory until they expire or are overwritten. Session middleware writes every non-empty session into this backend, so a deployment reachable by untrusted clients must configure `max_entries` and/or `max_bytes` — otherwise anonymous requests can keep creating sessions until memory is exhausted. `max_bytes` counts logical payload (`key.len() + value.len()`), not the allocator overhead of the stored strings and hash table, so many small entries use more memory than the counter reports; setting `max_entries` as well is recommended.
+
 ```
 DefaultBackend::new()                              // No resource limitation, DDoS is possible!
 DefaultBackend::new().max_entries(Some(100000000)) // Maximum 100000000 entries.
 DefaultBackend::new().max_bytes(Some(100000000))   // Maximum 100000000 bytes of key+value payload.
+DefaultBackend::new().max_bytes(Some(100000000)).bytes_evict_ratio(0.2) // Reclaim 20% of the byte limit per GC.
 ```
 
 Both limits are optional and can be combined. `max_entries` is enforced when a write adds a new key; overwriting an existing key does not change the entry count, so only `max_bytes` applies to overwrites. `max_bytes` counts `key.len() + value.len()` UTF-8 bytes; internal allocations and TTL metadata are not counted.
 
 When a write would exceed a configured limit, key eviction policy is:
-- Evict a batch of 10% of the exceeded limit at a time (at least 1 entry or 1 byte).
+- Evict a batch of 10% of the exceeded limit at a time (at least 1 entry or 1 byte). The ratio is configurable per limit with `entry_evict_ratio` / `bytes_evict_ratio` (default `0.1`, clamped to `0.0..=1.0`).
 - Expired keys go first, then keys having TTL attribute, sorted by TTL from shortest to longest.
 - Keys without a TTL are never evicted.
 - A single key+value larger than `max_bytes` is rejected without evicting anything.
@@ -334,6 +339,8 @@ app.wrap(
 )
 ```
 
+`real_ip` defaults to the peer address. Behind a reverse proxy every request appears to come from the proxy, so apps often read `X-Real-IP` / `X-Forwarded-For` instead. Only trust those headers when the peer address belongs to a trusted proxy and the proxy overwrites client-supplied values; otherwise clients can forge their source IP (e.g. to bypass IP-based rate limits).
+
 The middleware inserts an `Extension`, available in handlers:
 ```
 async fn handler(req: HttpRequest) -> impl Responder {
@@ -424,7 +431,9 @@ If you enable `request` feature, make sure `request::Middleware` is wrapped befo
 ### csrf
 We use [double submit](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html#alternative-using-a-double-submit-cookie-pattern) to protect against CSRF attacks.
 
-The token is stored in a cookie and must be echoed in a header (or a query parameter, generally only for websocket). You can use `memorydb` to store and check CSRF tokens. CSRF will be checked AFTER the auth.
+The token is stored in a cookie and must be echoed in a header (or a query parameter, generally only for websocket). The framework performs the transport-level double-submit check only: whether a matching token is actually valid for the user (e.g. bound to the session) is application-specific and belongs in the `checker` callback. You can use `memorydb` to store and check CSRF tokens there. CSRF will be checked AFTER the auth.
+
+Duplicated or empty CSRF cookies, headers and query parameters are rejected. `Param` tokens are carried in the URL and can leak through `Referer`, logs and browser history, so prefer `Header`; a `__Host-` cookie prefix and token rotation after authentication are recommended.
 
 Enforcement is configured per route through `Router.csrf`:
 - `CSRFType::Header` / `CSRFType::Param`: check all [unsafe](https://developer.mozilla.org/en-US/docs/Glossary/Safe/HTTP) methods; `Param` also accepts the token as a query parameter.
@@ -439,7 +448,9 @@ build_router(
     csrf::Middleware::new(
         String::from("CSRF_TOKEN"),     // csrf cookie
         String::from("X-CSRF-Token"),   // csrf header/param
-        |req, token| Box::pin(async { Ok(true) })          // csrf checker
+        // The checker is where the application validates the token
+        // (e.g. binds it to the session); see module docs.
+        |req, token| Box::pin(async { Ok(true) })
     ),
 );
 ```

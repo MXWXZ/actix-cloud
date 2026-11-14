@@ -156,7 +156,48 @@ mod tests {
 
     #[test]
     fn test_rand_string_all() {
-        let s = rand_string_all(4000);
-        assert!(s.chars().all(|c| ('!'..='~').contains(&c)));
+        for n in [0, 1, 2, 10, 63, 64, 4000] {
+            let s = rand_string_all(n);
+            assert_eq!(s.len(), n);
+            assert!(s.chars().all(|c| ('!'..='~').contains(&c)));
+        }
+    }
+
+    #[test]
+    fn random_string_helpers_do_not_repeat() {
+        use std::collections::HashSet;
+
+        // Basic entropy sanity check for helpers used to generate tokens/secrets.
+        let alnum: HashSet<String> = (0..256).map(|_| rand_string(32)).collect();
+        let hex: HashSet<String> = (0..256).map(|_| rand_string_hex(32)).collect();
+        let all: HashSet<String> = (0..256).map(|_| rand_string_all(32)).collect();
+
+        assert_eq!(alnum.len(), 256);
+        assert_eq!(hex.len(), 256);
+        assert_eq!(all.len(), 256);
+    }
+
+    #[cfg(feature = "rustls")]
+    #[test]
+    fn load_rustls_config_reports_io_and_missing_key_errors() {
+        let dir = std::env::temp_dir().join(format!("actix-cloud-rustls-{}", rand_string(12)));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let missing = dir.join("missing.pem");
+        assert!(matches!(
+            load_rustls_config(&missing, &missing),
+            Err(RustlsConfigError::Io(_))
+        ));
+
+        let cert = dir.join("cert.pem");
+        let key = dir.join("key.pem");
+        std::fs::write(&cert, "").unwrap();
+        std::fs::write(&key, "").unwrap();
+        assert!(matches!(
+            load_rustls_config(&cert, &key),
+            Err(RustlsConfigError::MissingPrivateKey)
+        ));
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

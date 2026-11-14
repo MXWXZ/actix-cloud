@@ -287,3 +287,95 @@ pub(crate) fn default_configuration(key: Key) -> Configuration {
         ttl_extension_policy: default_ttl_extension_policy(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::memorydb::default::DefaultBackend;
+
+    use super::*;
+
+    fn client() -> Arc<dyn MemoryDB> {
+        Arc::new(DefaultBackend::new())
+    }
+
+    #[test]
+    fn persistent_session_defaults() {
+        let p = PersistentSession::default();
+        assert_eq!(p.session_ttl, Duration::days(1));
+        assert!(matches!(
+            p.ttl_extension_policy,
+            TtlExtensionPolicy::OnStateChanges
+        ));
+    }
+
+    #[test]
+    fn default_configuration_values() {
+        let c = default_configuration(Key::generate());
+
+        assert!(c.cookie.secure);
+        assert!(c.cookie.http_only);
+        assert_eq!(c.cookie.name, "id");
+        assert_eq!(c.cookie.same_site, SameSite::Lax);
+        assert_eq!(c.cookie.path, "/");
+        assert!(c.cookie.domain.is_none());
+        assert!(c.cookie.max_age.is_none());
+        assert!(matches!(
+            c.cookie.content_security,
+            CookieContentSecurity::Private
+        ));
+        assert_eq!(c.session.state_ttl, Duration::days(1));
+        assert!(matches!(
+            c.ttl_extension_policy,
+            TtlExtensionPolicy::OnStateChanges
+        ));
+    }
+
+    #[test]
+    fn builder_setters_update_the_configuration() {
+        let builder =
+            SessionMiddlewareBuilder::new(client(), default_configuration(Key::generate()))
+                .cookie_name("sid".into())
+                .cookie_secure(false)
+                .cookie_http_only(false)
+                .cookie_same_site(SameSite::Strict)
+                .cookie_path("/app".into())
+                .cookie_domain(Some("example.com".into()))
+                .cookie_content_security(CookieContentSecurity::Signed)
+                .session_lifecycle(
+                    PersistentSession::default()
+                        .session_ttl(Duration::seconds(60))
+                        .session_ttl_extension_policy(TtlExtensionPolicy::OnEveryRequest),
+                );
+
+        let c = &builder.configuration;
+        assert_eq!(c.cookie.name, "sid");
+        assert!(!c.cookie.secure);
+        assert!(!c.cookie.http_only);
+        assert_eq!(c.cookie.same_site, SameSite::Strict);
+        assert_eq!(c.cookie.path, "/app");
+        assert_eq!(c.cookie.domain.as_deref(), Some("example.com"));
+        assert_eq!(c.cookie.max_age, Some(Duration::seconds(60)));
+        assert_eq!(c.session.state_ttl, Duration::seconds(60));
+        assert!(matches!(
+            c.cookie.content_security,
+            CookieContentSecurity::Signed
+        ));
+        assert!(matches!(
+            c.ttl_extension_policy,
+            TtlExtensionPolicy::OnEveryRequest
+        ));
+    }
+
+    #[test]
+    fn persistent_session_can_override_defaults() {
+        let p = PersistentSession::default()
+            .session_ttl(Duration::hours(2))
+            .session_ttl_extension_policy(TtlExtensionPolicy::OnEveryRequest);
+
+        assert_eq!(p.session_ttl, Duration::hours(2));
+        assert!(matches!(
+            p.ttl_extension_policy,
+            TtlExtensionPolicy::OnEveryRequest
+        ));
+    }
+}
