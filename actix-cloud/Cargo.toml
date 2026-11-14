@@ -1,6 +1,6 @@
 [package]
 name = "actix-cloud"
-version = "0.7.3"
+version = "0.8.0"
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
@@ -108,7 +108,7 @@ rustls = { version = "0.23.46", optional = true }
 rustls-pemfile = { version = "2.2.0", optional = true }
 
 # macros
-actix-cloud-codegen = { version = "0.3.2", path = "../actix-cloud-codegen", optional = true }
+actix-cloud-codegen = { version = "0.3.3", path = "../actix-cloud-codegen", optional = true }
 
 # config
 config = { version = "0.15.27", optional = true, default-features = false }
