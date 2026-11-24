@@ -1,3 +1,8 @@
+# 0.8.1
+## New
+1. `MemoryDB::incr`/`incr_by` and `decr`/`decr_by` atomically update `i64` counters. A missing or expired key starts at `0`, the key's TTL is preserved, and a non-integer value or an overflow returns the new `NotAnInteger`/`IntegerOverflow` errors without modifying the key.
+2. `DefaultBackend::evict_expired_only` makes GC reap expired entries only; entries whose TTL has not expired are then never evicted (default `false`).
+
 # 0.8.0
 ## Breaking changes
 1. `DefaultBackend::new()` no longer takes a capacity argument; configure limits with `.max_entries(...)` and `.max_bytes(...)` instead. Both are unbounded by default.

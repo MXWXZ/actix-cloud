@@ -11,7 +11,9 @@ use async_trait::async_trait;
 use chrono::Utc;
 use parking_lot::RwLock;
 
-use super::interface::{pattern, ttl_millis, MemoryDB, MemoryDBError, MemoryDBResult};
+use super::interface::{
+    parse_integer, pattern, ttl_millis, MemoryDB, MemoryDBError, MemoryDBResult,
+};
 
 /// Internal entry: `(value, absolute expiration timestamp in ms)`. `None` means no TTL.
 struct Data(String, Option<i64>);
@@ -110,9 +112,17 @@ impl Store {
     /// Evict expired entries, then live TTL entries shortest-TTL-first, until both
     /// quotas are met or no candidates remain.
     ///
-    /// `exclude` is never a candidate. Expired entries are always reaped; live
-    /// entries are only evicted when the candidate pool can satisfy the hard needs.
-    fn evict(&mut self, exclude: &str, entries: Quota, bytes: Quota) -> MemoryDBResult<()> {
+    /// `exclude` is never a candidate. Expired entries are always reaped. When
+    /// `expired_only` is set, live TTL entries are never candidates, so a write that
+    /// cannot be accommodated by expired entries alone fails; otherwise they are only
+    /// evicted when the candidate pool can satisfy the hard needs.
+    fn evict(
+        &mut self,
+        exclude: &str,
+        entries: Quota,
+        bytes: Quota,
+        expired_only: bool,
+    ) -> MemoryDBResult<()> {
         let mut freed_entries: usize = 0;
         let mut freed_bytes: usize = 0;
         let mut candidates = Vec::new();
@@ -126,6 +136,9 @@ impl Store {
                 freed_entries += 1;
                 freed_bytes = freed_bytes.saturating_add(Self::entry_bytes(k, v));
                 return false;
+            }
+            if expired_only {
+                return true;
             }
             if let Some(expiry) = v.1 {
                 if bytes.need > 0 {
@@ -221,7 +234,9 @@ impl Quota {
 ///   ratio is configurable with [`entry_evict_ratio`](Self::entry_evict_ratio) and
 ///   [`bytes_evict_ratio`](Self::bytes_evict_ratio).
 /// - Expired entries go first, then entries having a TTL attribute, sorted by TTL
-///   from shortest to longest. Entries without a TTL are never evicted.
+///   from shortest to longest. Entries without a TTL are never evicted. Set
+///   [`evict_expired_only`](Self::evict_expired_only) to never evict entries whose
+///   TTL has not expired.
 /// - A single key+value larger than `max_bytes` is rejected without evicting anything.
 /// - If the write still cannot be accommodated, an error is returned.
 ///
@@ -250,6 +265,7 @@ pub struct DefaultBackend {
     max_bytes: Option<usize>,
     entry_evict_ratio: f64,
     bytes_evict_ratio: f64,
+    evict_expired_only: bool,
 }
 
 impl Default for DefaultBackend {
@@ -271,6 +287,7 @@ impl DefaultBackend {
             max_bytes: None,
             entry_evict_ratio: DEFAULT_EVICT_RATIO,
             bytes_evict_ratio: DEFAULT_EVICT_RATIO,
+            evict_expired_only: false,
         }
     }
 
@@ -314,6 +331,18 @@ impl DefaultBackend {
         self
     }
 
+    /// Restrict GC to expired entries; default `false`.
+    ///
+    /// When `true`, an entry whose TTL has not expired is never evicted. A write that
+    /// would exceed a limit then fails with [`MemoryDBError::MaxEntriesExceeded`] or
+    /// [`MemoryDBError::MaxBytesExceeded`] once no expired entries remain to reap.
+    /// Entries without a TTL are never evicted either way.
+    #[must_use]
+    pub fn evict_expired_only(mut self, evict_expired_only: bool) -> Self {
+        self.evict_expired_only = evict_expired_only;
+        self
+    }
+
     /// Clamp a caller-supplied eviction ratio to `0.0..=1.0`; `NaN` becomes `0.0`.
     fn sanitize_ratio(ratio: f64) -> f64 {
         if ratio.is_nan() {
@@ -327,7 +356,8 @@ impl DefaultBackend {
     ///
     /// Returns an error if the entry alone exceeds `max_bytes`, or if eviction cannot
     /// free enough entries/bytes. On error, live TTL entries are only evicted when the
-    /// write is feasible, so a doomed write does not evict survivors.
+    /// write is feasible, so a doomed write does not evict survivors; with
+    /// [`evict_expired_only`](Self::evict_expired_only) they are never evicted.
     fn prepare_write(&self, store: &mut Store, key: &str, data: &Data) -> MemoryDBResult<()> {
         if self.max_entries.is_none() && self.max_bytes.is_none() {
             return Ok(());
@@ -365,7 +395,7 @@ impl DefaultBackend {
         if entries.need == 0 && bytes.need == 0 {
             return Ok(());
         }
-        store.evict(key, entries, bytes)
+        store.evict(key, entries, bytes, self.evict_expired_only)
     }
 
     /// Shared implementation of [`MemoryDB::set`] and [`MemoryDB::set_ex`].
@@ -530,11 +560,32 @@ impl MemoryDB for DefaultBackend {
             Ok(None)
         }
     }
+
+    async fn incr_by(&self, key: &str, delta: i64) -> MemoryDBResult<i64> {
+        let mut store = self.data.write();
+        // A missing or expired entry starts from zero. A live entry keeps its
+        // absolute expiration, so a counter update never extends or clears a TTL.
+        let (current, expiry) = match store.map.get(key) {
+            Some(data) if data.valid() => (
+                parse_integer(&data.0).ok_or(MemoryDBError::NotAnInteger)?,
+                data.1,
+            ),
+            _ => (0, None),
+        };
+        let value = current
+            .checked_add(delta)
+            .ok_or(MemoryDBError::IntegerOverflow)?;
+        let data = Data(value.to_string(), expiry);
+        self.prepare_write(&mut store, key, &data)?;
+        store.insert(key.to_owned(), data);
+        Ok(value)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::time::sleep;
 
     fn backend() -> DefaultBackend {
         DefaultBackend::new()
@@ -842,6 +893,84 @@ mod tests {
         assert_eq!(db.ttl("key").await.unwrap(), None);
         assert!(db.get("other").await.unwrap().is_none());
         assert_eq!(used_bytes(&db), 8); // "key" + "value"
+    }
+
+    // --- Counters ---
+
+    #[tokio::test]
+    async fn incr_decr_roundtrip_tracks_bytes_and_ttl() {
+        let db = backend();
+
+        assert_eq!(db.incr("counter").await.unwrap(), 1);
+        assert_eq!(used_bytes(&db), 8); // "counter" + "1"
+        assert_eq!(db.ttl("counter").await.unwrap(), None);
+
+        db.set_ex("counter", "9", &Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert_eq!(used_bytes(&db), 8);
+        assert_eq!(db.incr("counter").await.unwrap(), 10);
+        assert_eq!(used_bytes(&db), 9); // "counter" + "10"
+        assert!(db.ttl("counter").await.unwrap().is_some());
+
+        assert_eq!(db.decr_by("counter", 12).await.unwrap(), -2);
+        assert_eq!(used_bytes(&db), 9); // "counter" + "-2"
+        assert_eq!(db.get("counter").await.unwrap().as_deref(), Some("-2"));
+        assert_eq!(db.incr_by("counter", 2).await.unwrap(), 0);
+        assert_eq!(used_bytes(&db), 8); // "counter" + "0"
+
+        // A rejected update leaves the value and the accounting untouched.
+        db.set("counter", "not a number").await.unwrap();
+        assert!(matches!(
+            db.incr("counter").await,
+            Err(MemoryDBError::NotAnInteger)
+        ));
+        assert_eq!(
+            db.get("counter").await.unwrap().as_deref(),
+            Some("not a number")
+        );
+        assert_eq!(used_bytes(&db), 19);
+
+        // An expired entry restarts at zero and loses its TTL.
+        insert_expired(&db, "expired", "100");
+        assert_eq!(db.incr("expired").await.unwrap(), 1);
+        assert_eq!(db.get("expired").await.unwrap().as_deref(), Some("1"));
+        assert_eq!(db.ttl("expired").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn incr_respects_limits() {
+        let db = DefaultBackend::new().max_entries(Some(1));
+        db.set("keep", "1").await.unwrap();
+
+        // Creating a counter needs a free entry and nothing is evictable.
+        assert!(matches!(
+            db.incr("counter").await,
+            Err(MemoryDBError::MaxEntriesExceeded)
+        ));
+        assert_eq!(db.get("counter").await.unwrap(), None);
+
+        // Updating an existing counter is an overwrite, so `max_entries` does not apply.
+        assert_eq!(db.incr("keep").await.unwrap(), 2);
+        assert_eq!(db.get("keep").await.unwrap().as_deref(), Some("2"));
+
+        // Growing a counter triggers eviction like any other write.
+        let db = DefaultBackend::new().max_bytes(Some(4));
+        db.set_ex("a", "9", &Duration::from_secs(60)).await.unwrap(); // 2 bytes
+        db.set_ex("b", "9", &Duration::from_secs(30)).await.unwrap(); // 2 bytes
+        assert_eq!(db.incr("a").await.unwrap(), 10);
+        assert_eq!(db.get("a").await.unwrap().as_deref(), Some("10"));
+        assert_eq!(db.get("b").await.unwrap(), None);
+        assert_eq!(used_bytes(&db), 3); // "a" + "10"
+
+        // A counter value larger than the whole limit is rejected.
+        let db = DefaultBackend::new().max_bytes(Some(10));
+        db.set("a", "1").await.unwrap();
+        assert!(matches!(
+            db.incr_by("a", i64::MIN).await,
+            Err(MemoryDBError::EntryTooLarge)
+        ));
+        assert_eq!(db.get("a").await.unwrap().as_deref(), Some("1"));
     }
 
     // --- max_entries limit ---
@@ -1175,6 +1304,83 @@ mod tests {
         assert_eq!(db.get("d").await.unwrap().as_deref(), Some("444444444"));
         assert_eq!(db.keys("*").await.unwrap().len(), 3);
         assert_eq!(used_bytes(&db), 30);
+    }
+
+    // --- evict_expired_only ---
+
+    #[test]
+    fn evict_expired_only_defaults_to_false() {
+        assert!(!DefaultBackend::new().evict_expired_only);
+    }
+
+    #[tokio::test]
+    async fn evict_expired_only_rejects_new_entries_when_full() {
+        let db = DefaultBackend::new()
+            .max_entries(Some(2))
+            .evict_expired_only(true);
+
+        db.set_ex("long", "value", &Duration::from_secs(60))
+            .await
+            .unwrap();
+        db.set_ex("short", "value", &Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        // Without the flag, `short` would be evicted; with it the write fails.
+        assert!(matches!(
+            db.set("new", "value").await,
+            Err(MemoryDBError::MaxEntriesExceeded)
+        ));
+        assert!(db.get("long").await.unwrap().is_some());
+        assert!(db.get("short").await.unwrap().is_some());
+        assert_eq!(db.get("new").await.unwrap(), None);
+
+        // Overwriting an existing key still fits, since it needs no extra entry.
+        assert!(db.set("long", "new").await.is_ok());
+        assert_eq!(db.get("long").await.unwrap().as_deref(), Some("new"));
+    }
+
+    #[tokio::test]
+    async fn evict_expired_only_still_reaps_expired_entries() {
+        let db = DefaultBackend::new()
+            .max_entries(Some(2))
+            .evict_expired_only(true);
+
+        db.set("keep", "value").await.unwrap();
+        insert_expired(&db, "expired", "value");
+
+        db.set("new", "value").await.unwrap();
+
+        assert!(!db.data.read().map.contains_key("expired"));
+        assert_eq!(db.get("keep").await.unwrap().as_deref(), Some("value"));
+        assert_eq!(db.get("new").await.unwrap().as_deref(), Some("value"));
+    }
+
+    #[tokio::test]
+    async fn evict_expired_only_keeps_live_ttl_bytes() {
+        let db = DefaultBackend::new()
+            .max_bytes(Some(4))
+            .evict_expired_only(true);
+
+        db.set_ex("a", "1", &Duration::from_secs(60)).await.unwrap(); // 2 bytes
+        db.set_ex("b", "1", &Duration::from_millis(100))
+            .await
+            .unwrap(); // 2 bytes
+
+        // `b` is still alive, so the write cannot free any bytes.
+        assert!(matches!(
+            db.set("c", "").await, // 1 byte, projected 5
+            Err(MemoryDBError::MaxBytesExceeded)
+        ));
+        assert_eq!(used_bytes(&db), 4);
+        assert_eq!(db.get("c").await.unwrap(), None);
+
+        // Once `b` expires, the same write fits.
+        sleep(Duration::from_millis(300)).await;
+        db.set("c", "").await.unwrap();
+        assert_eq!(db.get("b").await.unwrap(), None);
+        assert_eq!(db.get("c").await.unwrap().as_deref(), Some(""));
+        assert_eq!(used_bytes(&db), 3); // "a" + "1" and "c" + ""
     }
 
     // --- Eviction ratios ---

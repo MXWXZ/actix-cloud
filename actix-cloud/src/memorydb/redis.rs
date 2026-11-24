@@ -8,7 +8,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use redis::{aio::ConnectionManager, AsyncCommands, ErrorKind, Expiry, ServerErrorKind};
 
-use super::interface::{pattern, ttl_millis, MemoryDB, MemoryDBResult};
+use super::interface::{pattern, ttl_millis, MemoryDB, MemoryDBError, MemoryDBResult};
 
 /// Whether `err` is Redis' response to `RENAME` when the source key is missing.
 ///
@@ -19,6 +19,28 @@ fn is_missing_key(err: &redis::RedisError) -> bool {
         err.kind(),
         ErrorKind::Server(ServerErrorKind::ResponseError)
     ) && err.detail() == Some("no such key")
+}
+
+/// Map the response errors of `INCRBY` to the matching [`MemoryDBError`] variant.
+///
+/// Redis reports both a non-integer value and an `i64` overflow as generic `ERR`
+/// replies, so the message text is the only way to tell them apart.
+fn counter_error(err: redis::RedisError) -> MemoryDBError {
+    if matches!(
+        err.kind(),
+        ErrorKind::Server(ServerErrorKind::ResponseError)
+    ) {
+        match err.detail() {
+            Some("value is not an integer or out of range") => {
+                return MemoryDBError::NotAnInteger;
+            }
+            Some("increment or decrement would overflow") => {
+                return MemoryDBError::IntegerOverflow;
+            }
+            _ => {}
+        }
+    }
+    err.into()
 }
 
 /// Page size hint for [`SCAN`](https://redis.io/commands/scan): large enough to keep
@@ -152,6 +174,14 @@ impl MemoryDB for RedisBackend {
             Ok(None)
         } else {
             Ok(Some(Duration::from_millis(ret.unsigned_abs())))
+        }
+    }
+
+    async fn incr_by(&self, key: &str, delta: i64) -> MemoryDBResult<i64> {
+        // INCRBY is atomic on the server and preserves the key's TTL.
+        match self.client.clone().incr(key, delta).await {
+            Ok(value) => Ok(value),
+            Err(err) => Err(counter_error(err)),
         }
     }
 }

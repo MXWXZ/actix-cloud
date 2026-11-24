@@ -29,6 +29,12 @@ pub enum MemoryDBError {
     /// The glob pattern passed to [`MemoryDB::keys`] is invalid.
     #[error("invalid key pattern: {0}")]
     InvalidPattern(String),
+    /// A counter operation found a value that is not a canonical decimal integer.
+    #[error("value is not an integer")]
+    NotAnInteger,
+    /// A counter operation would overflow the `i64` range.
+    #[error("integer overflow")]
+    IntegerOverflow,
     /// The Redis backend returned an error.
     #[cfg(feature = "redis")]
     #[error(transparent)]
@@ -71,6 +77,31 @@ pub(crate) fn ttl_millis(ttl: &Duration) -> MemoryDBResult<i64> {
 /// patterns fail consistently.
 pub(crate) fn pattern(key: &str) -> MemoryDBResult<glob::Pattern> {
     glob::Pattern::new(key).map_err(|e| MemoryDBError::InvalidPattern(e.to_string()))
+}
+
+/// Parse a stored counter value the way Redis' `INCRBY` does.
+///
+/// Only canonical decimal integers are accepted: an optional `-` followed by `0` or
+/// by a digit `1-9` and further digits. A leading `+`, whitespace and leading zeros
+/// are rejected, as are values that do not fit in `i64`. The default backend uses
+/// this parser so that both built-in backends accept and reject the same values.
+pub(crate) fn parse_integer(value: &str) -> Option<i64> {
+    let (negative, digits) = match value.strip_prefix('-') {
+        Some(digits) => (true, digits),
+        None => (false, value),
+    };
+    let canonical = match digits.as_bytes() {
+        [b'0'] => !negative,
+        [first, rest @ ..] => {
+            first.is_ascii_digit() && *first != b'0' && rest.iter().all(u8::is_ascii_digit)
+        }
+        [] => false,
+    };
+    if canonical {
+        value.parse().ok()
+    } else {
+        None
+    }
 }
 
 /// Object-safe async key-value database trait.
@@ -144,6 +175,40 @@ pub trait MemoryDB: Send + Sync {
 
     /// Get the remaining TTL of `key`, or `None` if the key does not exist or has no TTL.
     async fn ttl(&self, key: &str) -> MemoryDBResult<Option<Duration>>;
+
+    /// Atomically add `delta` to the integer stored at `key` and return the new value.
+    ///
+    /// A missing or expired key is treated as `0`. The key's TTL is preserved.
+    /// The stored value must be a canonical decimal integer, as accepted by Redis'
+    /// `INCRBY` (no leading `+`, whitespace or zeros); otherwise
+    /// [`MemoryDBError::NotAnInteger`] is returned. A result that does not fit in
+    /// `i64` returns [`MemoryDBError::IntegerOverflow`]. In both error cases the
+    /// stored value is left unchanged.
+    async fn incr_by(&self, key: &str, delta: i64) -> MemoryDBResult<i64>;
+
+    /// Atomically add `1` to the integer stored at `key` and return the new value.
+    ///
+    /// See [`incr_by`](Self::incr_by) for the full semantics.
+    async fn incr(&self, key: &str) -> MemoryDBResult<i64> {
+        self.incr_by(key, 1).await
+    }
+
+    /// Atomically subtract `1` from the integer stored at `key` and return the new value.
+    ///
+    /// See [`incr_by`](Self::incr_by) for the full semantics.
+    async fn decr(&self, key: &str) -> MemoryDBResult<i64> {
+        self.incr_by(key, -1).await
+    }
+
+    /// Atomically subtract `delta` from the integer stored at `key` and return the new value.
+    ///
+    /// A negative `delta` adds instead. Since the negation of `delta` must fit in
+    /// `i64`, `i64::MIN` returns [`MemoryDBError::IntegerOverflow`]. See
+    /// [`incr_by`](Self::incr_by) for the rest of the semantics.
+    async fn decr_by(&self, key: &str, delta: i64) -> MemoryDBResult<i64> {
+        let delta = delta.checked_neg().ok_or(MemoryDBError::IntegerOverflow)?;
+        self.incr_by(key, delta).await
+    }
 }
 
 #[cfg(test)]
@@ -154,7 +219,7 @@ pub trait MemoryDB: Send + Sync {
 /// against Redis at `redis://127.0.0.1:6379/0`. `make test` skips the `_redis` cases;
 /// use `make test_dev` when a local Redis is available.
 mod tests {
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
     use tokio::time::sleep;
 
     use super::*;
@@ -196,6 +261,28 @@ mod tests {
     }
 
     // --- Basic operations ---
+
+    #[test]
+    fn parse_integer_matches_redis_syntax() {
+        for (value, expected) in [
+            ("0", Some(0)),
+            ("1", Some(1)),
+            ("-1", Some(-1)),
+            ("9223372036854775807", Some(i64::MAX)),
+            ("-9223372036854775808", Some(i64::MIN)),
+            ("", None),
+            ("-", None),
+            ("+1", None),
+            ("01", None),
+            ("-0", None),
+            (" 1", None),
+            ("1 ", None),
+            ("1.0", None),
+            ("9223372036854775808", None),
+        ] {
+            assert_eq!(parse_integer(value), expected, "{value:?}");
+        }
+    }
 
     backend_test!(test_normal, test_normal_redis, test_normal_fn);
 
@@ -679,6 +766,113 @@ mod tests {
             1
         );
         assert_eq!(r.get(live).await.unwrap(), None);
+    }
+
+    // --- Counters ---
+
+    backend_test!(test_incr_decr, test_incr_decr_redis, test_incr_decr_fn);
+
+    async fn test_incr_decr_fn(name: &str, r: impl MemoryDB + 'static) {
+        let key = "_actix_cloud_ikey";
+
+        println!("Backend: {}", name);
+
+        let _ = r.del(key).await;
+
+        // A missing key starts from zero and is created without a TTL.
+        assert_eq!(r.incr(key).await.unwrap(), 1);
+        assert_eq!(r.get(key).await.unwrap().as_deref(), Some("1"));
+        assert_eq!(r.ttl(key).await.unwrap(), None);
+
+        assert_eq!(r.incr_by(key, 5).await.unwrap(), 6);
+        assert_eq!(r.decr(key).await.unwrap(), 5);
+        assert_eq!(r.decr_by(key, 3).await.unwrap(), 2);
+        // A negative delta reverses the direction.
+        assert_eq!(r.incr_by(key, -4).await.unwrap(), -2);
+        assert_eq!(r.decr_by(key, -2).await.unwrap(), 0);
+        assert_eq!(r.get(key).await.unwrap().as_deref(), Some("0"));
+
+        // Counter updates keep the key's TTL.
+        r.set_ex(key, "10", &Duration::from_secs(60)).await.unwrap();
+        assert_eq!(r.incr(key).await.unwrap(), 11);
+        let ttl = r.ttl(key).await.unwrap().unwrap();
+        assert!(ttl > Duration::from_secs(59));
+        assert!(ttl <= Duration::from_secs(60));
+
+        // Only canonical decimal integers are accepted; rejected values are left
+        // unchanged.
+        for value in [
+            "",
+            " ",
+            "1 ",
+            " 1",
+            "+1",
+            "01",
+            "-0",
+            "1.0",
+            "1e3",
+            "99999999999999999999",
+        ] {
+            r.set(key, value).await.unwrap();
+            assert!(
+                matches!(r.incr(key).await, Err(MemoryDBError::NotAnInteger)),
+                "{value:?}"
+            );
+            assert_eq!(r.get(key).await.unwrap().as_deref(), Some(value));
+        }
+
+        // Overflow is reported without changing the value.
+        let max = i64::MAX.to_string();
+        r.set(key, &max).await.unwrap();
+        assert!(matches!(
+            r.incr(key).await,
+            Err(MemoryDBError::IntegerOverflow)
+        ));
+        assert!(matches!(
+            r.incr_by(key, i64::MAX).await,
+            Err(MemoryDBError::IntegerOverflow)
+        ));
+        assert_eq!(r.get(key).await.unwrap().as_deref(), Some(max.as_str()));
+
+        let min = i64::MIN.to_string();
+        r.set(key, &min).await.unwrap();
+        assert!(matches!(
+            r.decr(key).await,
+            Err(MemoryDBError::IntegerOverflow)
+        ));
+        // `i64::MIN` cannot be negated even when subtracting it would not overflow.
+        assert!(matches!(
+            r.decr_by(key, i64::MIN).await,
+            Err(MemoryDBError::IntegerOverflow)
+        ));
+        assert_eq!(r.get(key).await.unwrap().as_deref(), Some(min.as_str()));
+
+        // An expired key counts as missing and starts over at zero.
+        r.set_ex(key, "100", &Duration::from_millis(100))
+            .await
+            .unwrap();
+        sleep(Duration::from_millis(300)).await;
+        assert_eq!(r.incr(key).await.unwrap(), 1);
+        assert_eq!(r.ttl(key).await.unwrap(), None);
+
+        // Concurrent updates are not lost.
+        let r = Arc::new(r);
+        let mut tasks = Vec::new();
+        for _ in 0..4 {
+            let r = Arc::clone(&r);
+            let key = key.to_owned();
+            tasks.push(tokio::spawn(async move {
+                for _ in 0..50 {
+                    r.incr(&key).await.unwrap();
+                }
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        assert_eq!(r.get(key).await.unwrap().as_deref(), Some("201"));
+
+        assert!(r.del(key).await.unwrap());
     }
 
     // --- Keys ---
